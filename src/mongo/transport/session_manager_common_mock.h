@@ -1,5 +1,5 @@
 /**
- *    Copyright (C) 2018-present MongoDB, Inc.
+ *    Copyright (C) 2024-present MongoDB, Inc.
  *
  *    This program is free software: you can redistribute it and/or modify
  *    it under the terms of the Server Side Public License, version 1,
@@ -27,24 +27,34 @@
  *    it in the license file.
  */
 
-#pragma once
+#include <fmt/format.h>
+#include <memory>
 
-#include "mongo/base/status.h"
-#include "mongo/rpc/message.h"
+#include "mongo/db/client.h"
+#include "mongo/db/operation_context.h"
+#include "mongo/db/service_context.h"
+#include "mongo/transport/session.h"
+#include "mongo/transport/session_manager.h"
+#include "mongo/transport/session_manager_common.h"
 
-namespace mongo {
+namespace mongo::transport {
 
-class Database;
-class OperationContext;
+class MockSessionManagerCommon : public SessionManagerCommon {
+public:
+    using SessionManagerCommon::SessionManagerCommon;
 
-/**
- * Invoked when database profile is enabled.
- */
-void profile(OperationContext* opCtx, NetworkOp op);
+protected:
+    std::string getClientThreadName(const Session& session) const override {
+        return fmt::format("mock{}", session.id());
+    }
 
-/**
- * Pre-creates the profile collection for the specified database.
- */
-Status createProfileCollection(OperationContext* opCtx, Database* db);
+    void configureServiceExecutorContext(Client* client, bool isPrivilegedSession) const override {
+        auto seCtx = std::make_unique<ServiceExecutorContext>();
+        seCtx->setThreadModel(ServiceExecutorContext::kSynchronous);
+        seCtx->setCanUseReserved(isPrivilegedSession);
+        stdx::lock_guard lk(*client);
+        ServiceExecutorContext::set(client, std::move(seCtx));
+    }
+};
 
-}  // namespace mongo
+}  // namespace mongo::transport

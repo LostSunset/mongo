@@ -29,15 +29,28 @@
 
 #pragma once
 
-#include <string>
-
-#include "mongo/base/string_data.h"
+#include "mongo/base/status.h"
+#include "mongo/rpc/message.h"
 
 namespace mongo {
 
-/**
- * Hashes the password so that it can be used for SCRAM-SHA-1 in MONGODB-CR compatability mode.
- */
-std::string createPasswordDigest(StringData username, StringData clearTextPassword);
+class Database;
+class OperationContext;
 
+// This namespace houses code related to the "system.profile" collection -- a capped system
+// collection where, if enabled, we write statistics and other diagnostic information on a
+// per-operation basis.
+namespace profile_collection {
+
+/**
+ * Invoked when database profile is enabled.
+ */
+void profile(OperationContext* opCtx, NetworkOp op);
+
+/**
+ * Pre-creates the profile collection for the specified database.
+ */
+Status createProfileCollection(OperationContext* opCtx, Database* db);
+
+}  // namespace profile_collection
 }  // namespace mongo
