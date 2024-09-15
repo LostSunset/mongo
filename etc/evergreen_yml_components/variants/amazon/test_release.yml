@@ -12,7 +12,7 @@ buildvariants:
       - amazon2-latest-small
     expansions:
       test_flags: >-
-        --excludeWithAnyTags=SERVER-34286,incompatible_with_amazon_linux,requires_external_data_source,requires_latch_analyzer
+        --excludeWithAnyTags=SERVER-34286,incompatible_with_amazon_linux,requires_external_data_source
         --enableEnterpriseTests=off
       push_path: linux
       push_bucket: downloads.mongodb.org
@@ -23,7 +23,6 @@ buildvariants:
         MONGO_DISTMOD=amazon2
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-        --use-diagnostic-latches=off
         --modules=
       multiversion_platform: amazon2
       multiversion_edition: targeted
@@ -55,7 +54,7 @@ buildvariants:
         archive-mongocryptd
         archive-mongocryptd-debug
       test_flags: >-
-        --excludeWithAnyTags=SERVER-34286,incompatible_with_amazon_linux,requires_external_data_source,requires_latch_analyzer,requires_ldap_pool
+        --excludeWithAnyTags=SERVER-34286,incompatible_with_amazon_linux,requires_external_data_source,requires_ldap_pool
       push_path: linux
       push_bucket: downloads.10gen.com
       push_name: linux
@@ -65,7 +64,6 @@ buildvariants:
         MONGO_DISTMOD=amazon2
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-        --use-diagnostic-latches=off
       crypt_task_compile_flags: >-
         SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique"
         CCFLAGS="-fno-gnu-unique"
@@ -92,7 +90,7 @@ buildvariants:
 
   - name: amazon2023
     display_name: Amazon Linux 2023.3
-    tags: ["bazel_check"]
+    tags: ["bazel_check", "forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - amazon2023.3-small
@@ -108,7 +106,7 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=incompatible_with_amazon_linux,requires_external_data_source,requires_latch_analyzer
+        --excludeWithAnyTags=incompatible_with_amazon_linux,requires_external_data_source
         --enableEnterpriseTests=off
       has_packages: true
       packager_script: packager.py
@@ -136,7 +134,7 @@ buildvariants:
 
   - name: enterprise-amazon2023
     display_name: "Enterprise Amazon Linux 2023.3"
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - amazon2023.3-small
@@ -152,7 +150,7 @@ buildvariants:
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
       crypt_task_compile_flags: SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique" CCFLAGS="-fno-gnu-unique"
-      test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source
       has_packages: true
       multiversion_platform: amazon2023
       multiversion_edition: enterprise
@@ -198,7 +196,7 @@ buildvariants:
   #       --linker=gold
   #       --link-model=object
   #     crypt_task_compile_flags: SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique" CCFLAGS="-fno-gnu-unique"
-  #     test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source,requires_latch_analyzer
+  #     test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source
   #     has_packages: true
   #     packager_script: packager_enterprise.py
   #     packager_arch: x86_64
@@ -229,7 +227,7 @@ buildvariants:
 
   - name: amazon2023-arm64
     display_name: Amazon Linux 2023.3 arm64
-    tags: ["bazel_check"]
+    tags: ["bazel_check", "forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - amazon2023.3-arm64-small
@@ -246,7 +244,7 @@ buildvariants:
         BAZEL_FLAGS="--subcommands"
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=incompatible_with_amazon_linux,requires_external_data_source,requires_latch_analyzer
+        --excludeWithAnyTags=incompatible_with_amazon_linux,requires_external_data_source
         --enableEnterpriseTests=off
       has_packages: true
       packager_script: packager.py
@@ -275,7 +273,7 @@ buildvariants:
   - &enterprise-amazon2023-arm64-template
     name: enterprise-amazon2023-arm64
     display_name: "Enterprise Amazon Linux 2023.3 arm64"
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - amazon2023.3-arm64-small
@@ -291,7 +289,7 @@ buildvariants:
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
       crypt_task_compile_flags: SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique" CCFLAGS="-fno-gnu-unique"
-      test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source
       has_packages: true
       multiversion_platform: amazon2023
       multiversion_edition: enterprise
@@ -338,7 +336,7 @@ buildvariants:
   #       --linker=gold
   #       --link-model=object
   #     crypt_task_compile_flags: SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique" CCFLAGS="-fno-gnu-unique"
-  #     test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source,requires_latch_analyzer
+  #     test_flags: --excludeWithAnyTags=incompatible_with_amazon_linux,requires_ldap_pool,requires_v4_0,requires_external_data_source
   #     has_packages: true
   #     multiversion_platform: amazon2023
   #     multiversion_edition: enterprise
@@ -369,13 +367,13 @@ buildvariants:
 
   - name: enterprise-amazon2-streams
     display_name: "Amazon Linux 2 enterprise build with streams"
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - amazon2-latest-small
     expansions:
       test_flags: >-
-        --excludeWithAnyTags=SERVER-34286,incompatible_with_amazon_linux,requires_external_data_source,requires_latch_analyzer,requires_ldap_pool
+        --excludeWithAnyTags=SERVER-34286,incompatible_with_amazon_linux,requires_external_data_source,requires_ldap_pool
       push_path: linux
       push_bucket: downloads.10gen.com
       push_name: linux

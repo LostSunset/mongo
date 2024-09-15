@@ -44,7 +44,6 @@ variables:
       --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
       --enable-http-client=on
       --link-model=dynamic
-      --use-diagnostic-latches=on
       --modules=
     num_scons_link_jobs_available: 0.99
 
@@ -90,7 +89,6 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --enable-http-client=on
         --link-model=dynamic
-        --use-diagnostic-latches=on
         --modules=
       scons_cache_mode: all
       scons_cache_scope: shared
@@ -151,7 +149,6 @@ buildvariants:
         MONGO_DISTMOD=windows
         -j$(( $(grep -c ^processor /proc/cpuinfo) / 2 ))
         --win-version-min=win10
-        --use-diagnostic-latches=on
       num_scons_link_jobs_available: 0.2
       python: "/cygdrive/c/python/python310/python.exe"
       ext: zip

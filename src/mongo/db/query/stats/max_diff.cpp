@@ -193,6 +193,12 @@ struct AreaDiffComparator {
     }
 };
 
+struct FreqDiffComparator {
+    bool operator()(const ValFreq& a, const ValFreq& b) const {
+        return (a._freqDiff > b._freqDiff) || (a._freqDiff == b._freqDiff && a._idx > b._idx);
+    }
+};
+
 inline bool isValidValFreq(std::vector<ValFreq>& valFreqVec) {
     return std::any_of(valFreqVec.begin(), valFreqVec.end(), [](ValFreq valFreq) {
         return valFreq._area >= 0.0 && valFreq._areaDiff >= 0.0 && valFreq._normArea >= 0.0 &&
@@ -215,6 +221,9 @@ std::vector<ValFreq> generateTopKBuckets(const DataDistribution& dataDistrib,
         return fillAndReturnPriorityQueueResult(dataDistrib, numBuckets, pq);
     } else if (sortArg == SortArg::kArea) {
         std::priority_queue<ValFreq, std::vector<ValFreq>, AreaComparator> pq;
+        return fillAndReturnPriorityQueueResult(dataDistrib, numBuckets, pq);
+    } else if (sortArg == SortArg::kFreqDiff) {
+        std::priority_queue<ValFreq, std::vector<ValFreq>, FreqDiffComparator> pq;
         return fillAndReturnPriorityQueueResult(dataDistrib, numBuckets, pq);
     }
     MONGO_UNREACHABLE_TASSERT(8674814);
@@ -266,9 +275,8 @@ DataDistribution getDataDistribution(const std::vector<SBEValue>& sortedInput) {
             // If maxArea is 0.0, this is because this value is the only value of its type bracket.
             // Because we want to force it to be a bucket, set maxArea to inifinte.
             std::pair<double, double> valPair;
-            valPair.first = {maxArea == 0.0 ? std::numeric_limits<double>::infinity() : maxArea};
-            valPair.second = {maxAreaDiff == 0.0 ? std::numeric_limits<double>::infinity()
-                                                 : maxAreaDiff};
+            valPair.first = {maxArea == 0.0 ? kDoubleInf : maxArea};
+            valPair.second = {maxAreaDiff == 0.0 ? kDoubleInf : maxAreaDiff};
             const auto res = result.typeClassBounds.emplace(i, valPair);
             uassert(6660551, "There can't be duplicate type class bounds.", res.second);
             maxArea = 0.0;
@@ -281,15 +289,20 @@ DataDistribution getDataDistribution(const std::vector<SBEValue>& sortedInput) {
         if (i == 0 || newTypeBracket) {
             // Make sure we insert bucket boundaries between different types, and also make sure
             // first value is picked for a boundary.
-            result._freq[i]._area = std::numeric_limits<double>::infinity();
-            result._freq[i]._areaDiff = std::numeric_limits<double>::infinity();
+            result._freq[i]._area = kDoubleInf;
+            result._freq[i]._areaDiff = kDoubleInf;
+            result._freq[i]._freqDiff = kDoubleInf;
         } else {
             result._freq[i]._area = boundedCalculateArea(v1, v2, result._freq[i]._freq);
             maxArea = std::max(maxArea, result._freq[i]._area);
-            result._freq[i]._areaDiff =
-                (i == 1 || result._freq[i - 1]._area == std::numeric_limits<double>::infinity())
+            result._freq[i]._areaDiff = (i == 1 || result._freq[i - 1]._area == kDoubleInf)
                 ? result._freq[i]._area
                 : std::abs(result._freq[i]._area - result._freq[i - 1]._area);
+            result._freq[i]._freqDiff = (i == 1 || result._freq[i - 1]._freqDiff == kDoubleInf)
+                ? result._freq[i]._freq
+                : ((result._freq[i]._freq > result._freq[i - 1]._freq)
+                       ? result._freq[i]._freq - result._freq[i - 1]._freq
+                       : result._freq[i - 1]._freq - result._freq[i]._freq);
             maxAreaDiff = std::max(maxAreaDiff, result._freq[i]._areaDiff);
         }
     }
@@ -303,12 +316,12 @@ DataDistribution getDataDistribution(const std::vector<SBEValue>& sortedInput) {
             (result._freq.size() <= 1 || maxAreaDiff >= 0.0));
 
     // Make sure last value is picked as a histogram bucket boundary.
-    result._freq.back()._area = std::numeric_limits<double>::infinity();
-    result._freq.back()._areaDiff = std::numeric_limits<double>::infinity();
+    result._freq.back()._area = kDoubleInf;
+    result._freq.back()._areaDiff = kDoubleInf;
 
     std::pair<double, double> valPair;
-    valPair.first = {maxArea == 0.0 ? std::numeric_limits<double>::infinity() : maxArea};
-    valPair.second = {maxAreaDiff == 0.0 ? std::numeric_limits<double>::infinity() : maxAreaDiff};
+    valPair.first = {maxArea == 0.0 ? kDoubleInf : maxArea};
+    valPair.second = {maxAreaDiff == 0.0 ? kDoubleInf : maxAreaDiff};
     const auto res = result.typeClassBounds.emplace(result._freq.size(), valPair);
 
     uassert(8674800, "There can't be duplicate type class bounds.", res.second);
@@ -321,12 +334,12 @@ DataDistribution getDataDistribution(const std::vector<SBEValue>& sortedInput) {
                 areaInfo.first != 0.0);
         for (size_t i = beginIdx; i < endIdx; ++i) {
             if (std::isinf(result._freq[i]._area)) {
-                result._freq[i]._normArea = std::numeric_limits<double>::infinity();
+                result._freq[i]._normArea = kDoubleInf;
             } else {
                 result._freq[i]._normArea = result._freq[i]._area / areaInfo.first;
             }
             if (std::isinf(result._freq[i]._areaDiff)) {
-                result._freq[i]._normAreaDiff = std::numeric_limits<double>::infinity();
+                result._freq[i]._normAreaDiff = kDoubleInf;
             } else {
                 result._freq[i]._normAreaDiff = result._freq[i]._areaDiff / areaInfo.second;
             }
@@ -335,10 +348,6 @@ DataDistribution getDataDistribution(const std::vector<SBEValue>& sortedInput) {
     }
 
     uassert(8674813, "ValFreq contains invalid values", isValidValFreq(result._freq));
-
-    LOGV2(8674810,
-          "Distribution sorted by value",
-          "distribution"_attr = printDistribution(result, result._freq.size()));
 
     return result;
 }

@@ -46,12 +46,12 @@
 #include "mongo/db/field_ref.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
-#include "mongo/db/ops/write_ops.h"
-#include "mongo/db/ops/write_ops_gen.h"
-#include "mongo/db/ops/write_ops_parsers.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/field_path.h"
 #include "mongo/db/pipeline/process_interface/mongo_process_interface.h"
+#include "mongo/db/query/write_ops/write_ops.h"
+#include "mongo/db/query/write_ops/write_ops_gen.h"
+#include "mongo/db/query/write_ops/write_ops_parsers.h"
 #include "mongo/s/catalog_cache.h"
 #include "mongo/s/shard_version.h"
 #include "mongo/util/uuid.h"
@@ -174,8 +174,7 @@ public:
                                        CurrentOpSessionsMode sessionMode,
                                        CurrentOpUserMode userMode,
                                        CurrentOpTruncateMode truncateMode,
-                                       CurrentOpCursorMode cursorMode,
-                                       CurrentOpBacktraceMode backtraceMode) const final;
+                                       CurrentOpCursorMode cursorMode) const final;
 
     std::vector<FieldPath> collectDocumentKeyFieldsActingAsRouter(
         OperationContext*, const NamespaceString&) const override;
@@ -205,8 +204,7 @@ protected:
      */
     virtual BSONObj _reportCurrentOpForClient(const boost::intrusive_ptr<ExpressionContext>& expCtx,
                                               Client* client,
-                                              CurrentOpTruncateMode truncateOps,
-                                              CurrentOpBacktraceMode backtraceMode) const = 0;
+                                              CurrentOpTruncateMode truncateOps) const = 0;
 
     /**
      * Iterates through all entries in the local SessionCatalog, and adds an entry to the 'ops'

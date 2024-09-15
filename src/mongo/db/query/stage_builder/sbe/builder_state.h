@@ -35,6 +35,7 @@
 #include <memory>
 
 #include "mongo/db/exec/sbe/values/slot.h"
+#include "mongo/db/query/plan_yield_policy_sbe.h"
 
 namespace mongo {
 class InMatchExpression;
@@ -169,7 +170,6 @@ struct StageBuilderState {
     // A flag to indicate the user allows disk use for spilling.
     bool allowDiskUse;
 
-    StringMap<sbe::value::SlotId> stringConstantToSlotMap;
     SimpleBSONObjMap<sbe::value::SlotId> keyPatternToSlotMap;
 };  // struct StageBuilderState
 }  // namespace stage_builder

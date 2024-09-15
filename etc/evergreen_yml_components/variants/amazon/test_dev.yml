@@ -25,7 +25,6 @@ variables:
       -j$(grep -c ^processor /proc/cpuinfo)
       --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
       --link-model=static
-      --use-diagnostic-latches=on
     unittest_compile_flags: >-
       --link-model=dynamic
 
@@ -85,7 +84,7 @@ buildvariants:
   - <<: *linux-arm64-dynamic-compile-params
     name: &amazon-linux2-arm64-static-compile amazon-linux2-arm64-static-compile
     display_name: "! Amazon Linux 2 arm64 Enterprise Shared Library Compile & Static Analysis"
-    tags: ["required", "bazel_check"]
+    tags: ["required", "bazel_check", "forbid_tasks_tagged_with_experimental"]
     expansions:
       <<: *linux-arm64-static-enterprise-compile-expansions
       clang_tidy_toolchain: v4
@@ -118,7 +117,7 @@ buildvariants:
     <<: *amazon_linux2_arm64_static_compile_variant_dependency
     name: &enterprise-amazon-linux2-arm64 enterprise-amazon-linux2-arm64
     display_name: "* Amazon Linux 2 arm64 Atlas Enterprise"
-    tags: ["suggested"]
+    tags: ["suggested", "forbid_tasks_tagged_with_experimental"]
     cron: "0 */4 * * *" # From the ${project_required_suggested_cron} parameter
     run_on:
       - amazon2-arm64-atlas-latest-small
@@ -152,7 +151,7 @@ buildvariants:
 
   - name: &commit-queue commit-queue
     display_name: "~ Commit Queue"
-    tags: ["bazel_check"]
+    tags: ["bazel_check", "forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * 0" # From the ${project_weekly_cron} parameter
     run_on:
       - amazon2-arm64-latest-small
@@ -168,7 +167,6 @@ buildvariants:
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --link-model=dynamic
-        --use-diagnostic-latches=on
       crypt_task_compile_flags: >-
         SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic
         -Wl,--no-gnu-unique"
@@ -207,10 +205,6 @@ buildvariants:
     stepback: true
     expansions:
       <<: *amazon_linux2_arm64_dynamic_expansions
-      # Diagnostic latches are disabled by default, and we match that behavior here. We also need to
-      # exclude tests with 'requires_latch_analyzer'.
-      compile_flags: >-
-        --use-diagnostic-latches=off
       scons_cache_scope: shared
       scons_cache_mode: all
       has_packages: false
@@ -222,7 +216,7 @@ buildvariants:
       exec_timeout_factor: 1.5
       test_flags: >-
         --mongodSetParameters="{internalQueryFrameworkControl: trySbeEngine}"
-        --excludeWithAnyTags=resource_intensive,requires_latch_analyzer
+        --excludeWithAnyTags=resource_intensive
     tasks:
       - name: aggregation_mongos_passthrough
       - name: aggregation_sharded_collections_passthrough

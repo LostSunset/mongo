@@ -25,6 +25,7 @@ env.SConscript(
         "search",
         "stage_builder/sbe",
         "stats",
+        "write_ops",
     ],
     exports=[
         "env",
@@ -38,6 +39,7 @@ env.Library(
         "canonical_query_encoder.cpp",
         "parsed_distinct_command.cpp",
         "parsed_find_command.cpp",
+        "query_shape/count_cmd_shape.cpp",
         "query_shape/distinct_cmd_shape.cpp",
         "query_shape/find_cmd_shape.cpp",
         "query_stats/find_key.cpp",
@@ -122,6 +124,17 @@ env.Library(
     LIBDEPS=[
         "$BUILD_DIR/mongo/base",
         "datetime/date_time_support",
+    ],
+)
+
+env.Library(
+    target="spill_util",
+    source=[
+        "util/spill_util.cpp",
+    ],
+    LIBDEPS=[
+        "$BUILD_DIR/mongo/db/storage/disk_space_util",
+        "query_knobs",
     ],
 )
 
@@ -367,6 +380,7 @@ env.CppUnitTest(
         "query_settings_test.cpp",
         "query_shape/agg_cmd_shape_test.cpp",
         "query_shape/cmd_with_let_shape_test.cpp",
+        "query_shape/count_cmd_shape_test.cpp",
         "query_shape/distinct_cmd_shape_test.cpp",
         "query_shape/find_cmd_shape_test.cpp",
         "query_solution_test.cpp",

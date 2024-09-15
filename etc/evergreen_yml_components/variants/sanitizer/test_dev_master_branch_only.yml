@@ -165,9 +165,6 @@ variables:
     # thread leaks, which we have because we don't do a clean shutdown
     # of the ServiceContext.
     #
-    # Run TSAN with diagnostic latches off, as our diagnostics reduce
-    # TSAN's visibility - see SERVER-88159.
-    #
     san_options: TSAN_OPTIONS="abort_on_error=1:disable_coredump=0:handle_abort=1:halt_on_error=1:report_thread_leaks=0:die_after_fork=0:history_size=4:suppressions=etc/tsan.suppressions:external_symbolizer_path=/opt/mongodbtoolchain/v4/bin/llvm-symbolizer"
     build_mongot: true
     download_mongot_release: true
@@ -181,7 +178,6 @@ variables:
       --use-libunwind=off
       --link-model=dynamic
       -j$(grep -c ^processor /proc/cpuinfo)
-      --use-diagnostic-latches=off
     # Avoid starting too many mongod's under TSAN build.
     resmoke_jobs_factor: 0.3
     scons_cache_scope: shared
@@ -200,7 +196,7 @@ buildvariants:
 
   - name: &enterprise-rhel-8-64-bit-dynamic-debug-mode enterprise-rhel-8-64-bit-dynamic-debug-mode
     display_name: "Shared Library Enterprise RHEL 8 Debug Mode"
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * 0" # From the ${project_weekly_cron} parameter
     run_on:
       - rhel8.8-small
@@ -220,7 +216,6 @@ buildvariants:
         --use-glibcxx-debug
         --dbg=on
         --allocator=system
-        --use-diagnostic-latches=on
       exec_timeout_secs: 32400 # 9 hour timeout
       timeout_secs: 18000 # 5 hour idle timeout
       large_distro_name: &enterprise-rhel-8-64-bit-dynamic-debug-mode-large-distro-name rhel8.8-xlarge
@@ -276,14 +271,13 @@ buildvariants:
 
   - name: &windows-debug-suggested windows-debug-suggested
     display_name: "* Windows Server 2022 DEBUG"
-    tags: ["suggested"]
+    tags: ["suggested", "forbid_tasks_tagged_with_experimental"]
     cron: "0 */4 * * *" # From the ${project_required_suggested_cron} parameter
     run_on:
       - windows-2022-small
     expansions:
       exe: ".exe"
       content_type: application/zip
-      # TODO(SERVER-94331): add --use-diagnostic-latches=on when deadlock on shutdown is fixed.
       compile_flags: >-
         --dbg=on
         --opt=on
@@ -298,10 +292,8 @@ buildvariants:
       multiversion_platform: windows
       multiversion_edition: enterprise
       large_distro_name: windows-2022-large
-      # TODO(SERVER-94331): remove --excludeWithAnyTags=requires_latch_analyzer when deadlock
-      # on shutdown is fixed.
       test_flags: >-
-        --excludeWithAnyTags=incompatible_with_windows_tls,requires_latch_analyzer
+        --excludeWithAnyTags=incompatible_with_windows_tls
         --enableEnterpriseTests=off
         --mongodSetParameters="{internalQueryEnableAggressiveSpillsInGroup: true}"
       compile_variant: *windows-debug-suggested
@@ -344,7 +336,6 @@ buildvariants:
         MONGO_DISTMOD=windows
         -j$(bc <<< "$(grep -c '^processor' /proc/cpuinfo) / 1.5")
         --win-version-min=win10
-        --use-diagnostic-latches=on
       num_scons_link_jobs_available: 0.25
       python: "/cygdrive/c/python/python310/python.exe"
       ext: zip
@@ -373,7 +364,7 @@ buildvariants:
   - &macos-debug-template
     name: &macos-debug-suggested macos-debug-suggested
     display_name: "* macOS arm64 DEBUG"
-    tags: ["suggested"]
+    tags: ["suggested", "forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_required_suggested_cron} parameter
     run_on:
       - macos-14-arm64
@@ -392,7 +383,6 @@ buildvariants:
         -j$(sysctl -n hw.logicalcpu)
         --libc++
         --variables-files=etc/scons/xcode_macosx_arm.vars
-        --use-diagnostic-latches=on
         --modules=
       num_scons_link_jobs_available: 0.99
     tasks:
@@ -426,7 +416,6 @@ buildvariants:
         -j$(sysctl -n hw.logicalcpu)
         --libc++
         --variables-files=etc/scons/xcode_macosx_arm.vars
-        --use-diagnostic-latches=on
       resmoke_jobs_max: 6
       num_scons_link_jobs_available: 0.99
     tasks:
@@ -468,7 +457,6 @@ buildvariants:
         --ssl
         --allocator=tcmalloc-gperf
         -j$(grep -c ^processor /proc/cpuinfo)
-        --use-diagnostic-latches=on
       compile_variant: *rhel8-debug-ubsan-all-feature-flags
       # To force disable feature flags even on the all feature flags variant, please use this file:
       # buildscripts/resmokeconfig/fully_disabled_feature_flags.yml
@@ -492,7 +480,7 @@ buildvariants:
   - <<: *linux_debug_aubsan_compile_variant_dependency
     name: &rhel8-debug-aubsan-all-feature-flags rhel8-debug-aubsan-all-feature-flags
     display_name: "* Shared Library {A,UB}SAN Enterprise RHEL 8 DEBUG (all feature flags)"
-    tags: ["suggested"]
+    tags: ["suggested", "forbid_tasks_tagged_with_experimental_experimental"]
     cron: "0 4 1-31/2 * *" # For cost reasons, we run this variant every other day
     run_on:
       - rhel8.8-large
@@ -565,7 +553,6 @@ buildvariants:
         --ssl
         -j$(grep -c ^processor /proc/cpuinfo)
         --link-model=dynamic
-        --use-diagnostic-latches=on
       test_flags: >-
         --benchmarkRepetitions=1
         --excludeWithAnyTags=incompatible_aubsan
@@ -580,7 +567,7 @@ buildvariants:
   - <<: *enterprise-rhel8-debug-tsan-compile-dependency
     name: &enterprise-rhel8-debug-tsan-all-feature-flags enterprise-rhel8-debug-tsan-all-feature-flags
     display_name: "* TSAN Enterprise RHEL 8 DEBUG (all feature flags)"
-    tags: ["suggested"]
+    tags: ["suggested", "forbid_tasks_tagged_with_experimental"]
     cron: "0 4 1-31/2 * *" # For cost reasons, we run this variant every other day.
     run_on:
       - rhel8.8-large
@@ -589,7 +576,7 @@ buildvariants:
       <<: *enterprise-rhel8-debug-tsan-expansions-template
       test_flags: >-
         --mongodSetParameters="{internalQueryEnableAggressiveSpillsInGroup: true, receiveChunkWaitForRangeDeleterTimeoutMS: 180000}"
-        --excludeWithAnyTags=tsan_incompatible,requires_latch_analyzer
+        --excludeWithAnyTags=tsan_incompatible
         --runAllFeatureFlagTests
     tasks:
       - name: .development_critical !.requires_large_host !.requires_compile_variant !.requires_large_host_tsan !.incompatible_development_variant !.incompatible_tsan !.incompatible_system_allocator !.incompatible_all_feature_flags
@@ -635,7 +622,6 @@ buildvariants:
         --detect-odr-violations
         --linker=gold
         --link-model=dynamic
-        --use-diagnostic-latches=on
       scons_cache_mode: all
       scons_cache_scope: shared
       num_scons_link_jobs_available: 0.99

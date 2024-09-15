@@ -287,7 +287,6 @@
 #include "mongo/util/exit_code.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/fast_clock_source_factory.h"
-#include "mongo/util/latch_analyzer.h"
 #include "mongo/util/net/ocsp/ocsp_manager.h"
 #include "mongo/util/net/private/ssl_expiration.h"
 #include "mongo/util/net/socket_utils.h"
@@ -2049,6 +2048,14 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
         shutdownChangeCollectionExpiredDocumentsRemover(serviceContext);
     }
 
+    {
+        TimeElapsedBuilderScopedTimer scopedTimer(
+            serviceContext->getFastClockSource(),
+            "Wait for the oplog cap maintainer thread to stop",
+            &shutdownTimeElapsedBuilder);
+        OplogCapMaintainerThread::get(serviceContext)->waitForFinish();
+    }
+
     // We should always be able to acquire the global lock at shutdown.
     //
     // For a Windows service, dbexit does not call exit(), so we must leak the lock outside
@@ -2064,17 +2071,6 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
                                                   &shutdownTimeElapsedBuilder);
         LOGV2(4784930, "Shutting down the storage engine");
         shutdownGlobalStorageEngineCleanly(serviceContext);
-    }
-
-    {
-        // We wait for the oplog cap maintainer thread to stop. This has to be done after the engine
-        // has been closed since the thread will only die once all references to the oplog have been
-        // deleted and we're performing a shutdown.
-        TimeElapsedBuilderScopedTimer scopedTimer(
-            serviceContext->getFastClockSource(),
-            "Wait for the oplog cap maintainer thread to stop",
-            &shutdownTimeElapsedBuilder);
-        OplogCapMaintainerThread::get(serviceContext)->waitForFinish();
     }
 
     // We drop the scope cache because leak sanitizer can't see across the
@@ -2094,10 +2090,6 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
     LOGV2(20565, "Now exiting");
 
     audit::logShutdown(client);
-
-#ifndef MONGO_CONFIG_USE_RAW_LATCHES
-    LatchAnalyzer::get(serviceContext).dump();
-#endif
 
 #if __has_feature(address_sanitizer) || __has_feature(thread_sanitizer)
     // SessionKiller relies on the network stack being cleanly shutdown which only occurs under

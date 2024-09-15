@@ -34,7 +34,7 @@ buildvariants:
   - &ubuntu2204-template
     name: &ubuntu2204 ubuntu2204
     display_name: Ubuntu 22.04
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2204-small
@@ -50,7 +50,7 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=requires_external_data_source,requires_increased_memlock_limits,requires_latch_analyzer
+        --excludeWithAnyTags=requires_external_data_source,requires_increased_memlock_limits
         --enableEnterpriseTests=off
       multiversion_platform: ubuntu2204
       multiversion_edition: targeted
@@ -91,7 +91,10 @@ buildvariants:
   - &ubuntu2404-template
     name: &ubuntu2404 ubuntu2404
     display_name: Ubuntu 24.04
-    tags: []
+    tags:
+      [
+        "forbid_tasks_tagged_with_experimental_experimental_experimental_experimental",
+      ]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2404-small
@@ -107,7 +110,7 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=requires_external_data_source,requires_increased_memlock_limits,requires_latch_analyzer
+        --excludeWithAnyTags=requires_external_data_source,requires_increased_memlock_limits
         --enableEnterpriseTests=off
       multiversion_platform: ubuntu2404
       multiversion_edition: targeted
@@ -147,7 +150,7 @@ buildvariants:
 
   - name: ubuntu2004
     display_name: Ubuntu 20.04
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental_experimental_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2004-small
@@ -163,7 +166,7 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+        --excludeWithAnyTags=requires_external_data_source
         --enableEnterpriseTests=off
       multiversion_platform: ubuntu2004
       multiversion_edition: targeted
@@ -194,7 +197,7 @@ buildvariants:
   - &enterprise-ubuntu2004-64-template
     name: &enterprise-ubuntu2004-64 enterprise-ubuntu2004-64
     display_name: Enterprise Ubuntu 20.04
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2004-small
@@ -211,7 +214,7 @@ buildvariants:
         --ssl MONGO_DISTMOD=ubuntu2004
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-      test_flags: --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=requires_external_data_source
       crypt_task_compile_flags: >-
         SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique"
         CCFLAGS="-fno-gnu-unique"
@@ -257,7 +260,7 @@ buildvariants:
 
   - name: enterprise-ubuntu2204-64
     display_name: Enterprise Ubuntu 22.04
-    tags: ["bazel_check"]
+    tags: ["bazel_check", "forbid_tasks_tagged_with_experimental_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2204-small
@@ -275,7 +278,7 @@ buildvariants:
         MONGO_DISTMOD=ubuntu2204
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-      test_flags: --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=requires_external_data_source
       crypt_task_compile_flags: >-
         SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique"
         CCFLAGS="-fno-gnu-unique"
@@ -334,7 +337,7 @@ buildvariants:
 
   - name: enterprise-ubuntu2004-arm64
     display_name: Enterprise Ubuntu 20.04 arm64
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2004-arm64
@@ -350,7 +353,7 @@ buildvariants:
         --ssl MONGO_DISTMOD=ubuntu2004
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-      test_flags: --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=requires_external_data_source
       crypt_task_compile_flags: >-
         SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique"
         CCFLAGS="-fno-gnu-unique"
@@ -384,7 +387,7 @@ buildvariants:
 
   - name: ubuntu2004-arm64
     display_name: Ubuntu 20.04 arm64
-    tags: ["bazel_check"]
+    tags: ["bazel_check", "forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2004-arm64-small
@@ -400,7 +403,7 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+        --excludeWithAnyTags=requires_external_data_source
         --enableEnterpriseTests=off
       resmoke_jobs_max: 8 # Avoid starting too many mongod's on ARM test servers
       has_packages: true
@@ -432,7 +435,7 @@ buildvariants:
 
   - name: enterprise-ubuntu2204-arm64
     display_name: Enterprise Ubuntu 22.04 arm64
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2204-arm64-small
@@ -443,7 +446,7 @@ buildvariants:
       push_name: linux
       push_arch: aarch64-enterprise-ubuntu2204
       compile_flags: --ssl MONGO_DISTMOD=ubuntu2204 -j$(grep -c ^processor /proc/cpuinfo) --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-      test_flags: --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=requires_external_data_source
       crypt_task_compile_flags: SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique" CCFLAGS="-fno-gnu-unique"
       resmoke_jobs_max: 4 # Avoid starting too many mongod's on ARM test servers
       has_packages: true
@@ -478,7 +481,7 @@ buildvariants:
 
   - name: ubuntu2204-arm64
     display_name: Ubuntu 22.04 arm64
-    tags: ["bazel_check"]
+    tags: ["bazel_check", "forbid_tasks_tagged_with_experimental_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2204-arm64-small
@@ -493,7 +496,7 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+        --excludeWithAnyTags=requires_external_data_source
         --enableEnterpriseTests=off
       resmoke_jobs_max: 8 # Avoid starting too many mongod's on ARM test servers
       has_packages: true
@@ -525,7 +528,7 @@ buildvariants:
 
   - name: enterprise-ubuntu2404
     display_name: Enterprise Ubuntu 24.04
-    tags: ["bazel_check"]
+    tags: ["bazel_check", "forbid_tasks_tagged_with_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2404-small
@@ -543,7 +546,7 @@ buildvariants:
         MONGO_DISTMOD=ubuntu2404
         -j$(grep -c ^processor /proc/cpuinfo)
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-      test_flags: --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=requires_external_data_source
       crypt_task_compile_flags: >-
         SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique"
         CCFLAGS="-fno-gnu-unique"
@@ -578,7 +581,11 @@ buildvariants:
 
   - name: ubuntu2404-arm64
     display_name: Ubuntu 24.04 arm64
-    tags: ["bazel_check"]
+    tags:
+      [
+        "bazel_check",
+        "forbid_tasks_tagged_with_experimental_experimental_experimental_experimental_experimental",
+      ]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2404-arm64-small
@@ -593,7 +600,7 @@ buildvariants:
         --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
         --modules=
       test_flags: >-
-        --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+        --excludeWithAnyTags=requires_external_data_source
         --enableEnterpriseTests=off
       resmoke_jobs_max: 8 # Avoid starting too many mongod's on ARM test servers
       has_packages: true
@@ -625,7 +632,7 @@ buildvariants:
 
   - name: enterprise-ubuntu2404-arm64
     display_name: Enterprise Ubuntu 24.04 arm64
-    tags: []
+    tags: ["forbid_tasks_tagged_with_experimental_experimental_experimental"]
     cron: "0 4 * * *" # From the ${project_nightly_cron} parameter.
     run_on:
       - ubuntu2404-arm64-small
@@ -636,7 +643,7 @@ buildvariants:
       push_name: linux
       push_arch: aarch64-enterprise-ubuntu2404
       compile_flags: --ssl MONGO_DISTMOD=ubuntu2404 -j$(grep -c ^processor /proc/cpuinfo) --variables-files=etc/scons/mongodbtoolchain_stable_gcc.vars
-      test_flags: --excludeWithAnyTags=requires_external_data_source,requires_latch_analyzer
+      test_flags: --excludeWithAnyTags=requires_external_data_source
       crypt_task_compile_flags: SHLINKFLAGS_EXTRA="-Wl,-Bsymbolic -Wl,--no-gnu-unique" CCFLAGS="-fno-gnu-unique"
       resmoke_jobs_max: 4 # Avoid starting too many mongod's on ARM test servers
       has_packages: true

@@ -108,142 +108,13 @@ std::unique_ptr<sbe::EExpression> makeNot(std::unique_ptr<sbe::EExpression> e);
 
 std::unique_ptr<sbe::EExpression> makeBinaryOp(sbe::EPrimBinary::Op binaryOp,
                                                std::unique_ptr<sbe::EExpression> lhs,
-                                               std::unique_ptr<sbe::EExpression> rhs);
-
-std::unique_ptr<sbe::EExpression> makeBinaryOpWithCollation(sbe::EPrimBinary::Op binaryOp,
-                                                            std::unique_ptr<sbe::EExpression> lhs,
-                                                            std::unique_ptr<sbe::EExpression> rhs,
-                                                            StageBuilderState& state);
-
-/**
- * Generates an EExpression that checks if the input expression is null or missing.
- */
-std::unique_ptr<sbe::EExpression> generateNullOrMissing(const sbe::EVariable& var);
-
-std::unique_ptr<sbe::EExpression> generateNullOrMissing(sbe::FrameId frameId,
-                                                        sbe::value::SlotId slotId);
-
-std::unique_ptr<sbe::EExpression> generateNullOrMissing(std::unique_ptr<sbe::EExpression> arg);
+                                               std::unique_ptr<sbe::EExpression> rhs,
+                                               StageBuilderState& state);
 
 /**
  * Generates an EExpression that checks if the input expression is null, missing, or undefined.
  */
 std::unique_ptr<sbe::EExpression> generateNullMissingOrUndefined(const sbe::EVariable& var);
-
-std::unique_ptr<sbe::EExpression> generateNullMissingOrUndefined(sbe::FrameId frameId,
-                                                                 sbe::value::SlotId slotId);
-
-std::unique_ptr<sbe::EExpression> generateNullMissingOrUndefined(
-    std::unique_ptr<sbe::EExpression> arg);
-
-/**
- * Generates an EExpression that checks if the input expression is a non-numeric type _assuming
- * that_ it has already been verified to be neither null nor missing.
- */
-std::unique_ptr<sbe::EExpression> generateNonNumericCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is the value NumberLong(-2^64).
- */
-std::unique_ptr<sbe::EExpression> generateLongLongMinCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is NaN _assuming that_ it has
- * already been verified to be numeric.
- */
-std::unique_ptr<sbe::EExpression> generateNaNCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is a numeric Infinity.
- */
-std::unique_ptr<sbe::EExpression> generateInfinityCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is a non-positive number (i.e. <= 0)
- * _assuming that_ it has already been verified to be numeric.
- */
-std::unique_ptr<sbe::EExpression> generateNonPositiveCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is a positive number (i.e. > 0)
- * _assuming that_ it has already been verified to be numeric.
- */
-std::unique_ptr<sbe::EExpression> generatePositiveCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is a negative (i.e., < 0) number
- * _assuming that_ it has already been verified to be numeric.
- */
-std::unique_ptr<sbe::EExpression> generateNegativeCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is _not_ an object, _assuming that_
- * it has already been verified to be neither null nor missing.
- */
-std::unique_ptr<sbe::EExpression> generateNonObjectCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks if the input expression is not a string, _assuming that
- * it has already been verified to be neither null nor missing.
- */
-std::unique_ptr<sbe::EExpression> generateNonStringCheck(const sbe::EVariable& var);
-
-/**
- * Generates an EExpression that checks whether the input expression is null, missing, or
- * unable to be converted to the type NumberInt32.
- */
-std::unique_ptr<sbe::EExpression> generateNullishOrNotRepresentableInt32Check(
-    const sbe::EVariable& var);
-
-std::unique_ptr<sbe::EExpression> generateNonTimestampCheck(const sbe::EVariable& var);
-
-/**
- * A pair representing a 1) true/false condition and 2) the value that should be returned if that
- * condition evaluates to true.
- */
-using CaseValuePair =
-    std::pair<std::unique_ptr<sbe::EExpression>, std::unique_ptr<sbe::EExpression>>;
-
-/**
- * Convert a list of CaseValuePairs into a chain of EIf expressions, with the final else case
- * evaluating to the 'defaultValue' EExpression.
- */
-template <typename... Ts>
-std::unique_ptr<sbe::EExpression> buildMultiBranchConditional(Ts... cases);
-
-template <typename... Ts>
-std::unique_ptr<sbe::EExpression> buildMultiBranchConditional(CaseValuePair headCase, Ts... rest) {
-    return sbe::makeE<sbe::EIf>(std::move(headCase.first),
-                                std::move(headCase.second),
-                                buildMultiBranchConditional(std::move(rest)...));
-}
-
-template <>
-std::unique_ptr<sbe::EExpression> buildMultiBranchConditional(
-    std::unique_ptr<sbe::EExpression> defaultCase);
-
-/**
- * Converts a std::vector of CaseValuePairs into a chain of EIf expressions in the same manner as
- * the 'buildMultiBranchConditional()' function.
- */
-std::unique_ptr<sbe::EExpression> buildMultiBranchConditionalFromCaseValuePairs(
-    std::vector<CaseValuePair> caseValuePairs, std::unique_ptr<sbe::EExpression> defaultValue);
-
-/**
- * Create tree consisting of coscan stage followed by limit stage.
- */
-std::unique_ptr<sbe::PlanStage> makeLimitCoScanTree(PlanNodeId planNodeId, long long limit = 1);
-
-std::unique_ptr<sbe::EExpression> makeFillEmpty(std::unique_ptr<sbe::EExpression> expr,
-                                                std::unique_ptr<sbe::EExpression> altExpr);
-
-/**
- * Check if expression returns Nothing and return boolean false if so. Otherwise, return the
- * expression.
- */
-std::unique_ptr<sbe::EExpression> makeFillEmptyFalse(std::unique_ptr<sbe::EExpression> e);
-
-std::unique_ptr<sbe::EExpression> makeFillEmptyTrue(std::unique_ptr<sbe::EExpression> e);
 
 /**
  * Creates an EFunction expression with the given name and arguments.
@@ -295,6 +166,8 @@ inline auto makeStrConstant(StringData str) {
 
 std::unique_ptr<sbe::EExpression> makeVariable(SbSlot ts);
 
+std::unique_ptr<sbe::EExpression> makeVariable(sbe::value::SlotId slotId);
+
 std::unique_ptr<sbe::EExpression> makeVariable(sbe::FrameId frameId, sbe::value::SlotId slotId);
 
 std::unique_ptr<sbe::EExpression> makeMoveVariable(sbe::FrameId frameId, sbe::value::SlotId slotId);
@@ -303,108 +176,19 @@ inline auto makeFail(int code, StringData errorMessage) {
     return sbe::makeE<sbe::EFail>(ErrorCodes::Error{code}, errorMessage);
 }
 
-/**
- * Check if expression returns Nothing and return null if so. Otherwise, return the expression.
- */
-std::unique_ptr<sbe::EExpression> makeFillEmptyNull(std::unique_ptr<sbe::EExpression> e);
-
-/**
- * Check if expression returns Nothing and return bsonUndefined if so. Otherwise, return the
- * expression.
- */
-std::unique_ptr<sbe::EExpression> makeFillEmptyUndefined(std::unique_ptr<sbe::EExpression> e);
-
-/**
- * Makes "newObj" function from variadic parameter pack of 'FieldPair' which is a pair of a field
- * name and field expression.
- */
-template <typename... Ts>
-std::unique_ptr<sbe::EExpression> makeNewObjFunction(Ts... fields);
-
-using FieldPair = std::pair<StringData, std::unique_ptr<sbe::EExpression>>;
-template <size_t N>
-using FieldExprs = std::array<std::unique_ptr<sbe::EExpression>, N>;
-
-// The following two template functions convert 'FieldPair' to two 'EExpression's and add them to
-// 'EExpression' array which will be converted back to variadic parameter pack for 'makeFunction()'.
-template <size_t N, size_t... Is>
-FieldExprs<N + 2> array_append(FieldExprs<N> fieldExprs,
-                               const std::index_sequence<Is...>&,
-                               std::unique_ptr<sbe::EExpression> nameExpr,
-                               std::unique_ptr<sbe::EExpression> valExpr) {
-    return FieldExprs<N + 2>{std::move(fieldExprs[Is])..., std::move(nameExpr), std::move(valExpr)};
-}
-template <size_t N>
-FieldExprs<N + 2> array_append(FieldExprs<N> fieldExprs, FieldPair field) {
-    return array_append(std::move(fieldExprs),
-                        std::make_index_sequence<N>{},
-                        makeStrConstant(field.first),
-                        std::move(field.second));
-}
-
-// The following two template functions convert the 'EExpression' array back to variadic parameter
-// pack and calls the 'makeFunction("newObj")'.
-template <size_t N, size_t... Is>
-std::unique_ptr<sbe::EExpression> makeNewObjFunction(FieldExprs<N> fieldExprs,
-                                                     const std::index_sequence<Is...>&) {
-    return makeFunction("newObj", std::move(fieldExprs[Is])...);
-}
-template <size_t N>
-std::unique_ptr<sbe::EExpression> makeNewObjFunction(FieldExprs<N> fieldExprs) {
-    return makeNewObjFunction(std::move(fieldExprs), std::make_index_sequence<N>{});
-}
-
-// Deals with the last 'FieldPair' and adds it to the 'EExpression' array.
-template <size_t N>
-std::unique_ptr<sbe::EExpression> makeNewObjFunction(FieldExprs<N> fieldExprs, FieldPair field) {
-    return makeNewObjFunction(array_append(std::move(fieldExprs), std::move(field)));
-}
-
-// Deals with the intermediary 'FieldPair's and adds them to the 'EExpression' array.
-template <size_t N, typename... Ts>
-std::unique_ptr<sbe::EExpression> makeNewObjFunction(FieldExprs<N> fieldExprs,
-                                                     FieldPair field,
-                                                     Ts... fields) {
-    return makeNewObjFunction(array_append(std::move(fieldExprs), std::move(field)),
-                              std::forward<Ts>(fields)...);
-}
-
-// Deals with the first 'FieldPair' and adds it to the 'EExpression' array.
-template <typename... Ts>
-std::unique_ptr<sbe::EExpression> makeNewObjFunction(FieldPair field, Ts... fields) {
-    return makeNewObjFunction(FieldExprs<2>{makeStrConstant(field.first), std::move(field.second)},
-                              std::forward<Ts>(fields)...);
-}
-
-std::unique_ptr<sbe::EExpression> makeNewBsonObject(std::vector<std::string> projectFields,
-                                                    sbe::EExpression::Vector projectValues);
+SbExpr makeNewBsonObject(StageBuilderState& state,
+                         std::vector<std::string> projectFields,
+                         SbExpr::Vector projectValues);
 
 /**
  * Generates an expression that returns shard key that behaves similarly to
  * ShardKeyPattern::extractShardKeyFromDoc. However, it will not check for arrays in shard key, as
  * it is used only for documents that are already persisted in a sharded collection
  */
-std::unique_ptr<sbe::EExpression> makeShardKeyFunctionForPersistedDocuments(
-    const std::vector<sbe::MatchPath>& shardKeyPaths,
-    const std::vector<bool>& shardKeyHashed,
-    const PlanStageSlots& slots);
-
-SbStage makeProject(SbStage stage, sbe::SlotExprPairVector projects, PlanNodeId nodeId);
-
-template <typename... Ts>
-SbStage makeProject(SbStage stage, PlanNodeId nodeId, Ts&&... pack) {
-    return makeProject(
-        std::move(stage), sbe::makeSlotExprPairVec(std::forward<Ts>(pack)...), nodeId);
-}
-
-SbStage makeHashAgg(SbStage stage,
-                    const sbe::value::SlotVector& gbs,
-                    sbe::AggExprVector aggs,
-                    boost::optional<sbe::value::SlotId> collatorSlot,
-                    bool allowDiskUse,
-                    sbe::SlotExprPairVector mergingExprs,
-                    PlanYieldPolicy* yieldPolicy,
-                    PlanNodeId planNodeId);
+SbExpr makeShardKeyFunctionForPersistedDocuments(StageBuilderState& state,
+                                                 const std::vector<sbe::MatchPath>& shardKeyPaths,
+                                                 const std::vector<bool>& shardKeyHashed,
+                                                 const PlanStageSlots& slots);
 
 std::unique_ptr<sbe::EExpression> makeIf(std::unique_ptr<sbe::EExpression> condExpr,
                                          std::unique_ptr<sbe::EExpression> thenExpr,
@@ -535,54 +319,19 @@ std::unique_ptr<sbe::SortSpec> makeSortSpecFromSortPattern(const SortPattern& so
 std::unique_ptr<sbe::SortSpec> makeSortSpecFromSortPattern(
     const boost::optional<SortPattern>& sortPattern);
 
-/**
- * Constructs local binding with inner expression built by 'innerExprFunc' and variables assigned
- * to expressions from 'bindings'.
- * Example usage:
- *
- * makeLocalBind(
- *   _context->frameIdGenerator,
- *   [](sbe::EVariable inputArray, sbe::EVariable index) {
- *     return <expression using inputArray and index>;
- *   },
- *   <expression to assign to inputArray>,
- *   <expression to assign to index>
- * );
- */
-template <typename... Bindings,
-          typename InnerExprFunc,
-          typename = std::enable_if_t<
-              std::conjunction_v<std::is_same<std::unique_ptr<sbe::EExpression>, Bindings>...>>>
-std::unique_ptr<sbe::EExpression> makeLocalBind(sbe::value::FrameIdGenerator* frameIdGenerator,
-                                                InnerExprFunc innerExprFunc,
-                                                Bindings... bindings) {
-    auto frameId = frameIdGenerator->generate();
-    auto binds = sbe::makeEs();
-    binds.reserve(sizeof...(Bindings));
-    sbe::value::SlotId lastIndex = 0;
-    auto convertToVariable = [&](std::unique_ptr<sbe::EExpression> expr) {
-        binds.emplace_back(std::move(expr));
-        auto currentIndex = lastIndex;
-        lastIndex++;
-        return sbe::EVariable{frameId, currentIndex};
-    };
-    auto innerExpr = innerExprFunc(convertToVariable(std::move(bindings))...);
-    return sbe::makeE<sbe::ELocalBind>(frameId, std::move(binds), std::move(innerExpr));
-}
-
-std::tuple<std::unique_ptr<sbe::PlanStage>, SbSlot, SbSlot, sbe::value::SlotVector>
-makeLoopJoinForFetch(std::unique_ptr<sbe::PlanStage> inputStage,
-                     std::vector<std::string> fields,
-                     SbSlot seekRecordIdSlot,
-                     SbSlot snapshotIdSlot,
-                     SbSlot indexIdentSlot,
-                     SbSlot indexKeySlot,
-                     SbSlot indexKeyPatternSlot,
-                     boost::optional<SbSlot> prefetchedResultSlot,
-                     const CollectionPtr& collToFetch,
-                     StageBuilderState& state,
-                     PlanNodeId planNodeId,
-                     sbe::value::SlotVector slotsToForward);
+std::tuple<SbStage, SbSlot, SbSlot, SbSlotVector> makeLoopJoinForFetch(
+    SbStage inputStage,
+    std::vector<std::string> fields,
+    SbSlot seekRecordIdSlot,
+    SbSlot snapshotIdSlot,
+    SbSlot indexIdentSlot,
+    SbSlot indexKeySlot,
+    SbSlot indexKeyPatternSlot,
+    boost::optional<SbSlot> prefetchedResultSlot,
+    const CollectionPtr& collToFetch,
+    StageBuilderState& state,
+    PlanNodeId planNodeId,
+    SbSlotVector slotsToForward);
 
 /**
  * Given an index key pattern, and a subset of the fields of the index key pattern that are depended
@@ -723,18 +472,16 @@ struct PathTreeNode {
     T value = {};
 };
 
-using SlotTreeNode = PathTreeNode<boost::optional<sbe::value::SlotId>>;
+using SlotTreeNode = PathTreeNode<boost::optional<SbSlot>>;
 
 std::unique_ptr<SlotTreeNode> buildKeyPatternTree(const BSONObj& keyPattern,
-                                                  const sbe::value::SlotVector& slots);
+                                                  const SbSlotVector& slots);
 
-std::unique_ptr<sbe::EExpression> buildNewObjExpr(const SlotTreeNode* slotTree);
+SbExpr buildNewObjExpr(StageBuilderState& state, const SlotTreeNode* slotTree);
 
-std::unique_ptr<sbe::PlanStage> rehydrateIndexKey(std::unique_ptr<sbe::PlanStage> stage,
-                                                  const BSONObj& indexKeyPattern,
-                                                  PlanNodeId nodeId,
-                                                  const sbe::value::SlotVector& indexKeySlots,
-                                                  sbe::value::SlotId resultSlot);
+SbExpr rehydrateIndexKey(StageBuilderState& state,
+                         const BSONObj& indexKeyPattern,
+                         const SbSlotVector& indexKeySlots);
 
 template <typename T>
 inline const char* getRawStringData(const T& str) {
@@ -1227,14 +974,13 @@ std::vector<ProjectNode> cloneProjectNodes(const std::vector<ProjectNode>& nodes
  *
  * The order of slots in 'outSlots' will match the order of field paths in 'fields'.
  */
-std::pair<std::unique_ptr<sbe::PlanStage>, SbSlotVector> projectFieldsToSlots(
-    std::unique_ptr<sbe::PlanStage> stage,
-    const std::vector<std::string>& fields,
-    boost::optional<SbSlot> resultSlot,
-    PlanNodeId nodeId,
-    sbe::value::SlotIdGenerator* slotIdGenerator,
-    StageBuilderState& state,
-    const PlanStageSlots* slots = nullptr);
+std::pair<SbStage, SbSlotVector> projectFieldsToSlots(SbStage stage,
+                                                      const std::vector<std::string>& fields,
+                                                      boost::optional<SbSlot> resultSlot,
+                                                      PlanNodeId nodeId,
+                                                      sbe::value::SlotIdGenerator* slotIdGenerator,
+                                                      StageBuilderState& state,
+                                                      const PlanStageSlots* slots = nullptr);
 
 template <typename T>
 inline StringData getTopLevelField(const T& path) {
