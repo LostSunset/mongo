@@ -88,6 +88,48 @@ public:
     // Indicates that there is no expiration time by when a request needs to complete
     static constexpr Date_t kNoExpirationDate{Date_t::max()};
 
+    /**
+     * Debug log level which includes all debug logging emitted by implementations of
+     * NetworkInterface. Tests for NetworkInterface should ensure the kNetwork component's log
+     * verbosity is set to this debug level.
+     */
+    static constexpr int kDiagnosticLogLevel = 4;
+
+    class ExhaustResponseReader : public std::enable_shared_from_this<ExhaustResponseReader> {
+    public:
+        ExhaustResponseReader(const ExhaustResponseReader&) = delete;
+        ExhaustResponseReader& operator=(const ExhaustResponseReader&) = delete;
+
+        virtual ~ExhaustResponseReader() = default;
+
+        /**
+         * Reads the next response from the exhaust command.
+         *
+         * The returned future is always successful, though the status contained in the
+         * RemoteCommandResponse may not be OK.
+         *
+         * If the returned Future is fulfilled with a response whose moreToCome member is false,
+         * then no further responses will be available for reading. Any subsequent attempt to read a
+         * response will return a Future fulfilled with a RemoteCommandResponse containing an
+         * ExhaustCommandFinished error.
+         *
+         * If the startExhaustCommand invocation that created this used a baton, calls to next()
+         * will also use that baton.
+         *
+         * Similarly, cancelling the source associated with the CancellationToken that was
+         * originally passed to the the startExhaustCommand invocation will cancel this
+         * ExhaustResponseReader and cause subsequent calls to next() to return futures fulfilled
+         * with responses containing CallbackCancelled errors.
+         *
+         * The timeout provided to the originating RemoteCommandRequest will be used for each call
+         * to next().
+         */
+        virtual SemiFuture<RemoteCommandResponse> next() = 0;
+
+    protected:
+        ExhaustResponseReader() = default;
+    };
+
     virtual ~NetworkInterface();
 
     /**
@@ -224,27 +266,13 @@ public:
                                const BatonHandle& baton = nullptr) = 0;
 
     /**
-     * Sets an alarm, which schedules "action" to run no sooner than "when".
+     * Sets an alarm, which fulfills the returned Future no sooner than "when".
      *
-     * Returns ErrorCodes::ShutdownInProgress if NetworkInterface::shutdown has already started
-     * and true otherwise. If it returns Status::OK(), then the action will be executed by
-     * NetworkInterface eventually if no error occurs while waiting for the alarm; otherwise,
-     * it will not.
-     *
-     * "action" should not do anything that requires a lot of computation, or that might block for a
-     * long time, as it may execute in a network thread.
-     *
-     * Any callbacks invoked from setAlarm must observe onNetworkThread to
-     * return true. See that method for why.
+     * Ready immediately with ErrorCodes::ShutdownInProgress if NetworkInterface::shutdown has
+     * already started.
      */
-    virtual Status setAlarm(const TaskExecutor::CallbackHandle& cbHandle,
-                            Date_t when,
-                            unique_function<void(Status)> action) = 0;
-
-    /**
-     * Requests cancellation of the alarm associated with "cbHandle" if it has not yet completed.
-     */
-    virtual void cancelAlarm(const TaskExecutor::CallbackHandle& cbHandle) = 0;
+    virtual SemiFuture<void> setAlarm(
+        Date_t when, const CancellationToken& token = CancellationToken::uncancelable()) = 0;
 
     /**
      * Schedules the specified action to run as soon as possible on the network interface's

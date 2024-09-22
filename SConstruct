@@ -489,14 +489,6 @@ add_option(
 )
 
 add_option(
-    "consolidated-test-bins",
-    choices=["on", "off"],
-    default="off",
-    help="Test binaries should build consolidated versions of themselves as defined by CONSOLIDATED_TARGET",
-    type="choice",
-)
-
-add_option(
     "use-sasl-client",
     help="Support SASL authentication in the client library",
     nargs=0,
@@ -940,7 +932,6 @@ def variable_tools_converter(val):
     return tool_list + [
         "distsrc",
         "gziptool",
-        "mongo_consolidated_targets",
         "mongo_test_execution",
         "mongo_test_list",
         "mongo_benchmark",
@@ -1852,7 +1843,7 @@ env.Append(
 try:
     env["ICECC_DEBUG"] = to_boolean(env["ICECC_DEBUG"])
 except ValueError as e:
-    env.FatalError("Error setting ICECC_DEBUG variable: {e}")
+    env.FatalError(f"Error setting ICECC_DEBUG variable: {e}")
 
 if has_option("variables-help"):
     print(env_vars.GenerateHelpText(env))
@@ -5768,7 +5759,7 @@ gdb_index_enabled = env.get("GDB_INDEX")
 if gdb_index_enabled == "auto" and link_model == "dynamic":
     gdb_index_enabled = True
 
-if gdb_index_enabled == True:
+if gdb_index_enabled:
     gdb_index = Tool("gdb_index")
     if gdb_index.exists(env):
         gdb_index.generate(env)
@@ -6674,8 +6665,6 @@ env.AlwaysBuild(cachePrune)
 # and all the other setup that happens before we begin a real graph
 # walk.
 env.Alias("configure", None)
-
-env.CreateConsolidatedTargets()
 
 # We have finished all SConscripts and targets, so we can ask
 # auto_install_binaries to finalize the installation setup.
