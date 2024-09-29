@@ -419,6 +419,7 @@ jsTestOptions = function() {
             setParametersMongocryptd: TestData.setParametersMongocryptd,
             storageEngine: TestData.storageEngine,
             storageEngineCacheSizeGB: TestData.storageEngineCacheSizeGB,
+            shellGRPC: TestData.shellGRPC || false,
             shellTlsEnabled: TestData.shellTlsEnabled || false,
             shellTlsCertificateKeyFile: TestData.shellTlsCertificateKeyFile,
             tlsCAFile: TestData.tlsCAFile,
@@ -521,7 +522,6 @@ jsTestOptions = function() {
             configShard: TestData.configShard || false,
 
             useAutoBootstrapProcedure: TestData.useAutoBootstrapProcedure || false,
-            nonClusteredConfigTransactions: TestData.nonClusteredConfigTransactions || false,
 
             embeddedRouter: TestData.embeddedRouter || false,
 

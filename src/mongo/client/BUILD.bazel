@@ -456,8 +456,6 @@ mongo_cc_library(
     name = "fetcher",
     srcs = [
         "fetcher.cpp",
-        "//src/mongo/db:clientcursor.h",
-        "//src/mongo/db:cursor_id.h",
     ],
     hdrs = [
         "fetcher.h",
@@ -465,7 +463,26 @@ mongo_cc_library(
     deps = [
         ":remote_command_retry_scheduler",
         "//src/mongo/db:server_base",
+        "//src/mongo/db/query/client_cursor",
         "//src/mongo/executor:task_executor_interface",  # TODO(SERVER-93876): Remove.
         "//src/mongo/rpc:command_status",
+    ],
+)
+
+mongo_cc_library(
+    name = "remote_command_targeter",
+    srcs = [
+        "remote_command_targeter_factory_impl.cpp",
+        "remote_command_targeter_rs.cpp",
+        "remote_command_targeter_standalone.cpp",
+    ],
+    hdrs = [
+        "remote_command_targeter_factory_impl.h",
+        "remote_command_targeter_rs.h",
+        "remote_command_targeter_standalone.h",
+    ],
+    deps = [
+        ":clientdriver_network",
+        "//src/mongo/db:service_context",
     ],
 )

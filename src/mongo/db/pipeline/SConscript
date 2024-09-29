@@ -27,18 +27,6 @@ env.Library(
     ],
 )
 
-env.Library(
-    target="docs_needed_bounds_visitor",
-    source=["visitors/document_source_visitor_docs_needed_bounds.cpp"],
-    LIBDEPS_PRIVATE=[
-        "change_stream_pipeline",
-        "docs_needed_bounds",
-        "document_source_internal_apply_oplog_update",
-        "pipeline",
-        "pipeline_visitor",
-    ],
-)
-
 env.Benchmark(
     target="document_source_group_bm",
     source=[
@@ -72,27 +60,6 @@ env.Library(
     ],
     LIBDEPS=[
         "change_stream_pipeline",
-    ],
-)
-
-env.Benchmark(
-    target="abt_translation_bm",
-    source=[
-        "abt/abt_translate_cq_bm.cpp",
-        "abt/abt_translate_pipeline_bm.cpp",
-    ],
-    LIBDEPS=[
-        "$BUILD_DIR/mongo/db/auth/authmocks",
-        "$BUILD_DIR/mongo/db/bonsai_query_bm_fixture",
-        "$BUILD_DIR/mongo/db/pipeline/abt_translation",
-        "$BUILD_DIR/mongo/db/pipeline/pipeline",
-        "$BUILD_DIR/mongo/db/query/canonical_query",
-        "$BUILD_DIR/mongo/db/query/query_test_service_context",
-        "$BUILD_DIR/mongo/db/query_exec",
-        "$BUILD_DIR/mongo/db/query_expressions",
-        "$BUILD_DIR/mongo/db/service_context_non_d",
-        "$BUILD_DIR/mongo/unittest/unittest",
-        "$BUILD_DIR/mongo/util/processinfo",
     ],
 )
 
@@ -267,7 +234,6 @@ env.CppUnitTest(
         "$BUILD_DIR/mongo/s/query/exec/router_exec_stage",
         "$BUILD_DIR/mongo/s/sharding_mongos_test_fixture",
         "$BUILD_DIR/mongo/util/clock_source_mock",
-        "abt_translation",
         "accumulator",
         "aggregation_request_helper",
         "change_stream_pipeline",

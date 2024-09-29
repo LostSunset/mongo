@@ -69,6 +69,7 @@
 #include "mongo/db/audit.h"
 #include "mongo/db/audit_interface.h"
 #include "mongo/db/auth/auth_op_observer.h"
+#include "mongo/db/auth/authorization_backend_interface.h"
 #include "mongo/db/auth/authorization_manager.h"
 #include "mongo/db/auth/user_cache_invalidator_job.h"
 #include "mongo/db/catalog/collection.h"
@@ -88,7 +89,6 @@
 #include "mongo/db/change_stream_serverless_helpers.h"
 #include "mongo/db/change_streams_cluster_parameter_gen.h"
 #include "mongo/db/client.h"
-#include "mongo/db/clientcursor.h"
 #include "mongo/db/cluster_role.h"
 #include "mongo/db/commands.h"
 #include "mongo/db/commands/feature_compatibility_version.h"
@@ -138,6 +138,7 @@
 #include "mongo/db/pipeline/change_stream_preimage_gen.h"
 #include "mongo/db/pipeline/process_interface/replica_set_node_process_interface.h"
 #include "mongo/db/profile_filter_impl.h"
+#include "mongo/db/query/client_cursor/clientcursor.h"
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/query/query_settings/query_settings_manager.h"
 #include "mongo/db/query/stats/stats_cache_loader_impl.h"
@@ -195,6 +196,7 @@
 #include "mongo/db/s/sharding_initialization_mongod.h"
 #include "mongo/db/s/sharding_ready.h"
 #include "mongo/db/s/transaction_coordinator_service.h"
+#include "mongo/db/server_lifecycle_monitor.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/serverless/shard_split_donor_op_observer.h"
 #include "mongo/db/serverless/shard_split_donor_service.h"
@@ -247,7 +249,6 @@
 #include "mongo/logv2/redaction.h"
 #include "mongo/platform/atomic_word.h"
 #include "mongo/platform/compiler.h"
-#include "mongo/platform/mutex.h"
 #include "mongo/platform/process_id.h"
 #include "mongo/platform/random.h"
 #include "mongo/rpc/metadata/egress_metadata_hook_list.h"
@@ -267,6 +268,7 @@
 #include "mongo/s/sharding_state.h"
 #include "mongo/scripting/dbdirectclient_factory.h"
 #include "mongo/scripting/engine.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/transport/ingress_handshake_metrics.h"
 #include "mongo/transport/session_manager_common.h"
 #include "mongo/transport/transport_layer.h"
@@ -779,11 +781,15 @@ ExitCode _initAndListen(ServiceContext* serviceContext) {
 
     auto const authzManagerShard =
         AuthorizationManager::get(serviceContext->getService(ClusterRole::ShardServer));
+
+    auto authzBackend = auth::AuthorizationBackendInterface::get(
+        serviceContext->getService(ClusterRole::ShardServer));
     {
         TimeElapsedBuilderScopedTimer scopedTimer(serviceContext->getFastClockSource(),
                                                   "Build user and roles graph",
                                                   &startupTimeElapsedBuilder);
         uassertStatusOK(authzManagerShard->initialize(startupOpCtx.get()));
+        uassertStatusOK(authzBackend->initialize(startupOpCtx.get()));
     }
 
     if (audit::initializeManager) {
@@ -1217,6 +1223,8 @@ ExitCode _initAndListen(ServiceContext* serviceContext) {
         return getMagicRestoreMain()(serviceContext);
     }
 
+    globalServerLifecycleMonitor().onFinishingStartup();
+
     logStartupStats.dismiss();
     logMongodStartupTimeElapsedStatistics(serviceContext,
                                           beginInitAndListen,
@@ -1628,7 +1636,7 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
 
     // Before doing anything else, ensure fsync is inactive or make it release its GlobalRead lock.
     {
-        stdx::unique_lock<Latch> stateLock(fsyncStateMutex);
+        stdx::unique_lock<stdx::mutex> stateLock(fsyncStateMutex);
         if (globalFsyncLockThread) {
             globalFsyncLockThread->shutdown(stateLock);
         }
@@ -2056,7 +2064,7 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
             serviceContext->getFastClockSource(),
             "Wait for the oplog cap maintainer thread to stop",
             &shutdownTimeElapsedBuilder);
-        OplogCapMaintainerThread::get(serviceContext)->waitForFinish();
+        OplogCapMaintainerThread::get(serviceContext)->shutdown();
     }
 
     // We should always be able to acquire the global lock at shutdown.

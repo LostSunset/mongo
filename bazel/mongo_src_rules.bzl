@@ -421,16 +421,16 @@ GCC_OPT_DEFINES = select({
 
 LINUX_OPT_COPTS = select({
     # This is opt=debug, not to be confused with (opt=on && dbg=on)
-    "//bazel/config:linux_opt_debug": [
+    "//bazel/config:gcc_or_clang_opt_debug": [
         "-Og",
     ],
-    "//bazel/config:linux_opt_off": [
+    "//bazel/config:gcc_or_clang_opt_off": [
         "-O0",
     ],
-    "//bazel/config:linux_opt_on": [
+    "//bazel/config:gcc_or_clang_opt_on": [
         "-O2",
     ],
-    "//bazel/config:linux_opt_size": [
+    "//bazel/config:gcc_or_clang_opt_size": [
         "-Os",
     ],
     "//conditions:default": [],
@@ -1049,6 +1049,8 @@ GDWARF_FEATURES = select({
     # -gdwarf64 was supported. If this creates incompatibility issues, we may
     # need to fallback to -gdwarf32 in certain cases.
     "//bazel/config:linux_gcc": ["dwarf64"],
+    # SUSE15 builds system libraries with dwarf32, use dwarf32 to be keep consistent
+    "//bazel/config:suse15_gcc": ["dwarf32"],
     "//conditions:default": [],
 })
 
@@ -1375,7 +1377,8 @@ def mongo_cc_library(
         non_transitive_dyn_linkopts = [],
         defines = [],
         additional_linker_inputs = [],
-        features = []):
+        features = [],
+        exec_properties = {}):
     """Wrapper around cc_library.
 
     Args:
@@ -1441,6 +1444,17 @@ def mongo_cc_library(
         })
     else:
         enterprise_compatible = []
+
+    if "compile_requires_large_memory" in tags:
+        exec_properties |= select({
+            "//bazel/config:gcc_x86_64": {
+                "Pool": "large_mem_x86_64",
+            },
+            "//bazel/config:gcc_aarch64": {
+                "Pool": "large_memory_arm64",
+            },
+            "//conditions:default": {},
+        })
 
     fincludes_copt = force_includes_copt(native.package_name(), name)
     fincludes_hdr = force_includes_hdr(native.package_name(), name)
@@ -1521,6 +1535,7 @@ def mongo_cc_library(
             "//conditions:default": ["@platforms//:incompatible"],
         }) + target_compatible_with + enterprise_compatible,
         additional_linker_inputs = additional_linker_inputs + MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS,
+        exec_properties = exec_properties,
     )
     cc_library(
         name = name + WITH_DEBUG_SUFFIX,
@@ -1545,6 +1560,7 @@ def mongo_cc_library(
         }) + features,
         target_compatible_with = target_compatible_with + enterprise_compatible,
         additional_linker_inputs = additional_linker_inputs + MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS,
+        exec_properties = exec_properties,
     )
 
     # Creates a shared library version of our target only if
@@ -1567,6 +1583,7 @@ def mongo_cc_library(
             "//conditions:default": [],
         }),
         additional_linker_inputs = additional_linker_inputs + MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS,
+        exec_properties = exec_properties,
     )
 
     extract_debuginfo(
@@ -2004,8 +2021,9 @@ def mongo_proto_library(
     )
 
     dummy_file(
-        name = name + "_dummy_debug_symbol",
-        output = "lib" + name + ".so.debug",
+        name = name + "_exclude_link",
+        output = "lib" + name + ".so.exclude_lib",
+        tags = ["scons_link_lists"],
     )
 
 def mongo_cc_proto_library(
@@ -2016,11 +2034,6 @@ def mongo_cc_proto_library(
         name = name,
         deps = deps,
         **kwargs
-    )
-
-    dummy_file(
-        name = name + "_dummy_debug_symbol",
-        output = "lib" + name + ".so.debug",
     )
 
 def mongo_cc_grpc_library(

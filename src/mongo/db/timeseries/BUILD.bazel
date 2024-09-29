@@ -113,7 +113,7 @@ mongo_cc_library(
         "//src/mongo/db/commands:server_status_core",
     ],
     deps = [
-        "//src/mongo/bson/util:bson_column",
+        "//src/mongo/bson/column",
         "//src/mongo/db:server_base",
         "//src/mongo/db/storage:storage_options",
         "//src/mongo/util:fail_point",
@@ -143,7 +143,7 @@ mongo_cc_library(
     deps = [
         ":bucket_compression",
         ":timeseries_options",  # TODO(SERVER-93876): Remove.
-        "//src/mongo/bson/util:bson_column",  # TODO(SERVER-93876): Remove.
+        "//src/mongo/bson/column",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:coll_mod_command_idl",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:index_commands_idl",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:server_base",
@@ -198,5 +198,22 @@ mongo_cc_library(
         "//src/mongo/db/storage:storage_options",
         "//src/mongo/db/timeseries/bucket_catalog",
         "//src/mongo/db/update:update_common",
+    ],
+)
+
+mongo_cc_library(
+    name = "timeseries_op_observer",
+    srcs = [
+        "timeseries_op_observer.cpp",
+    ],
+    hdrs = [
+        "timeseries_op_observer.h",
+    ],
+    deps = [
+        ":timeseries_extended_range",
+        "//src/mongo/db/catalog:collection_catalog",
+        "//src/mongo/db/concurrency:lock_manager",
+        "//src/mongo/db/op_observer",
+        "//src/mongo/db/timeseries/bucket_catalog",
     ],
 )

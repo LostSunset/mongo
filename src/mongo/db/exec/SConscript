@@ -15,20 +15,6 @@ env.SConscript(
     ],
 )
 
-env.Library(
-    target="stagedebug_cmd",
-    source=[
-        "stagedebug_cmd.cpp",
-    ],
-    LIBDEPS=[
-        "$BUILD_DIR/mongo/db/index/index_access_method",
-        "$BUILD_DIR/mongo/db/query_exec",
-    ],
-    LIBDEPS_PRIVATE=[
-        "$BUILD_DIR/mongo/db/commands/test_commands_enabled",
-    ],
-)
-
 env.CppUnitTest(
     target="db_exec_test",
     source=[
@@ -55,7 +41,7 @@ env.CppUnitTest(
     ],
     LIBDEPS=[
         "$BUILD_DIR/mongo/base",
-        "$BUILD_DIR/mongo/bson/util/bson_column",
+        "$BUILD_DIR/mongo/bson/column/column",
         "$BUILD_DIR/mongo/db/auth/authmocks",
         "$BUILD_DIR/mongo/db/query/collation/collator_factory_mock",
         "$BUILD_DIR/mongo/db/query/collation/collator_interface_mock",
