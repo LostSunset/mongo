@@ -53,9 +53,7 @@
 #include "mongo/bson/unordered_fields_bsonobj_comparator.h"
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/database_name.h"
-#include "mongo/db/operation_context.h"
 #include "mongo/db/query/write_ops/single_write_result_gen.h"
-#include "mongo/db/service_context.h"
 #include "mongo/db/timeseries/bucket_catalog/bucket.h"
 #include "mongo/db/timeseries/bucket_catalog/bucket_identifiers.h"
 #include "mongo/db/timeseries/bucket_catalog/bucket_metadata.h"
@@ -190,10 +188,6 @@ struct Stripe {
  */
 class BucketCatalog {
 public:
-    static BucketCatalog& get(ServiceContext* svcCtx);
-    static BucketCatalog& get(OperationContext* opCtx);
-
-    BucketCatalog();
     BucketCatalog(size_t numberOfStripes, std::function<uint64_t()> memoryUsageThreshold);
     BucketCatalog(const BucketCatalog&) = delete;
     BucketCatalog operator=(const BucketCatalog&) = delete;
@@ -222,9 +216,6 @@ public:
 
     // Memory usage threshold in bytes after which idle buckets will be expired.
     std::function<uint64_t()> memoryUsageThreshold;
-
-    // Cardinality of opened and archived buckets managed across all stripes.
-    AtomicWord<uint32_t> numberOfActiveBuckets;
 };
 
 /**
@@ -268,14 +259,14 @@ void getDetailedMemoryUsage(const BucketCatalog& catalog, BSONObjBuilder& builde
  * std::monostate which requires no intermediate action, The caller should then proceed to call
  * 'insert' to insert 'doc', passing any fetched bucket back as a member of the 'ReopeningContext'.
  */
-StatusWith<InsertResult> tryInsert(OperationContext* opCtx,
-                                   BucketCatalog& catalog,
-                                   const NamespaceString& nss,
+StatusWith<InsertResult> tryInsert(BucketCatalog& catalog,
                                    const StringDataComparator* comparator,
                                    const BSONObj& doc,
+                                   OperationId,
                                    CombineWithInsertsFromOtherClients combine,
                                    InsertContext& insertContext,
-                                   const Date_t& time);
+                                   const Date_t& time,
+                                   uint64_t storageCacheSize);
 
 /**
  * Returns the WriteBatch into which the document was inserted and a list of any buckets that were
@@ -286,15 +277,15 @@ StatusWith<InsertResult> tryInsert(OperationContext* opCtx,
  * 'doc' to that bucket. Otherwise we will attempt to find a suitable open bucket, or open a new
  * bucket if none exists.
  */
-StatusWith<InsertResult> insertWithReopeningContext(OperationContext* opCtx,
-                                                    BucketCatalog& catalog,
-                                                    const NamespaceString& nss,
+StatusWith<InsertResult> insertWithReopeningContext(BucketCatalog& catalog,
                                                     const StringDataComparator* comparator,
                                                     const BSONObj& doc,
+                                                    OperationId,
                                                     CombineWithInsertsFromOtherClients combine,
                                                     ReopeningContext& reopeningContext,
                                                     InsertContext& insertContext,
-                                                    const Date_t& time);
+                                                    const Date_t& time,
+                                                    uint64_t storageCacheSize);
 
 /**
  * Returns the WriteBatch into which the document was inserted and a list of any buckets that were
@@ -303,14 +294,14 @@ StatusWith<InsertResult> insertWithReopeningContext(OperationContext* opCtx,
  *
  * We will attempt to find a suitable open bucket, or open a new bucket if none exists.
  */
-StatusWith<InsertResult> insert(OperationContext* opCtx,
-                                BucketCatalog& catalog,
-                                const NamespaceString& nss,
+StatusWith<InsertResult> insert(BucketCatalog& catalog,
                                 const StringDataComparator* comparator,
                                 const BSONObj& doc,
+                                OperationId,
                                 CombineWithInsertsFromOtherClients combine,
                                 InsertContext& insertContext,
-                                const Date_t& time);
+                                const Date_t& time,
+                                uint64_t storageCacheSize);
 
 /**
  * If a 'tryInsert' call returns a 'InsertWaiter' object, the caller should use this function to
@@ -325,9 +316,7 @@ void waitToInsert(InsertWaiter* waiter);
  * on the same bucket, or there is an outstanding 'ReopeningRequest' for the same series (metaField
  * value), this operation will block waiting for it to complete.
  */
-Status prepareCommit(BucketCatalog& catalog,
-                     const NamespaceString& nss,
-                     std::shared_ptr<WriteBatch> batch);
+Status prepareCommit(BucketCatalog& catalog, std::shared_ptr<WriteBatch> batch);
 
 /**
  * Records the result of a batch commit. Caller must already have commit rights on batch, and batch
@@ -335,13 +324,15 @@ Status prepareCommit(BucketCatalog& catalog,
  *
  * Returns bucket information of a bucket if one was closed.
  *
- * Debug builds will attempt to verify the resulting bucket contents on disk if passed an 'opCtx'.
+ * If a runPostCommitDebugChecks function is provided, it will attempt to verify the resulting
+ * bucket contents on disk.
  */
-boost::optional<ClosedBucket> finish(OperationContext* opCtx,
-                                     BucketCatalog& catalog,
-                                     const NamespaceString& nss,
-                                     std::shared_ptr<WriteBatch> batch,
-                                     const CommitInfo& info);
+boost::optional<ClosedBucket> finish(
+    BucketCatalog& catalog,
+    std::shared_ptr<WriteBatch> batch,
+    const CommitInfo& info,
+    const std::function<void(const timeseries::bucket_catalog::WriteBatch&, StringData timeField)>&
+        runPostCommitDebugChecks = nullptr);
 
 /**
  * Aborts the given write batch and any other outstanding (unprepared) batches on the same bucket,
@@ -368,9 +359,15 @@ void directWriteFinish(BucketStateRegistry& registry, const BucketId& bucketId);
 
 /**
  * Clears any bucket whose collection UUID has been cleared by removing the bucket from the catalog
- * asynchronously through the BucketStateRegistry.
+ * asynchronously through the BucketStateRegistry. Drops statistics for the affected collections.
  */
-void clear(BucketCatalog& catalog, tracked_vector<UUID> clearedCollectionUUIDs);
+void drop(BucketCatalog& catalog, tracked_vector<UUID> clearedCollectionUUIDs);
+
+/**
+ * Clears the buckets for the given collection UUID by removing the bucket from the catalog
+ * asynchronously through the BucketStateRegistry. Drops statistics for the affected collection.
+ */
+void drop(BucketCatalog& catalog, const UUID& collectionUUID);
 
 /**
  * Clears the buckets for the given collection UUID by removing the bucket from the catalog

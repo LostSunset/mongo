@@ -442,7 +442,7 @@ void remoteCommandFailedEarly(const TaskExecutor::CallbackArgs& cbData,
                               const TaskExecutor::RemoteCommandCallbackFn& cb,
                               const RemoteCommandRequest& request) {
     invariant(!cbData.status.isOK());
-    cb({cbData.executor, cbData.myHandle, request, {boost::none, cbData.status}});
+    cb({cbData.executor, cbData.myHandle, request, {request.target, cbData.status}});
 }
 }  // namespace
 
@@ -476,7 +476,7 @@ StatusWith<TaskExecutor::CallbackHandle> ThreadPoolTaskExecutor::scheduleRemoteC
     try {
         // TODO SERVER-93114 once all owning references to TaskExecutors are by shared_ptr, change
         // the unsafeToInlineFuture below to thenRunOn(shared_from_this()).
-        _net->startCommand(swCbHandle.getValue(), scheduledRequest, baton)
+        _net->startCommand(swCbHandle.getValue(), scheduledRequest, baton, cbState->source.token())
             .unsafeToInlineFuture()
             .getAsync([this, scheduledRequest, cbState, cb](
                           const StatusWith<ResponseStatus>& swResponse) {

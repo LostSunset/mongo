@@ -168,7 +168,7 @@ mongo_cc_library(
         "//src/mongo/db/exec/document_value",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db/query/query_shape",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db/query/query_stats:query_stats_parse",
-        "//src/mongo/db/storage:key_string",
+        "//src/mongo/db/storage/key_string",
         "//src/mongo/db/timeseries:timeseries_options",  # TODO(SERVER-93876): Remove.
         "//src/mongo/idl:idl_parser",
         "//src/mongo/s:common_s",
@@ -1190,5 +1190,20 @@ mongo_cc_library(
         ":document_source_internal_apply_oplog_update",
         ":pipeline",
         ":pipeline_visitor",
+    ],
+)
+
+mongo_cc_library(
+    name = "change_stream_expired_pre_image_remover",
+    srcs = [
+        "change_stream_expired_pre_image_remover.cpp",
+    ],
+    hdrs = [
+        "change_stream_expired_pre_image_remover.h",
+    ],
+    deps = [
+        "//src/mongo/db:change_stream_pre_images_collection_manager",
+        "//src/mongo/db:shard_role",
+        "//src/mongo/util:periodic_runner",
     ],
 )

@@ -96,7 +96,7 @@
 #include "mongo/db/timeseries/timeseries_index_schema_conversion_functions.h"
 #include "mongo/db/transaction/transaction_participant.h"
 #include "mongo/db/transaction_resources.h"
-#include "mongo/db/ttl_collection_cache.h"
+#include "mongo/db/ttl/ttl_collection_cache.h"
 #include "mongo/logv2/log.h"
 #include "mongo/logv2/log_attr.h"
 #include "mongo/logv2/log_component.h"
@@ -137,7 +137,7 @@ Status checkValidatorCanBeUsedOnNs(const BSONObj& validator,
         return Status::OK();
     }
 
-    if (nss.isSystem() && !nss.isDropPendingNamespace()) {
+    if (nss.isSystem()) {
         return {ErrorCodes::InvalidOptions,
                 str::stream() << "Document validators not allowed on system collection "
                               << nss.toStringForErrorMsg() << " with UUID " << uuid};

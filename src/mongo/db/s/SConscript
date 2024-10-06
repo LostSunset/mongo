@@ -27,11 +27,7 @@ env.Library(
         "global_index/global_index_cloner_fetcher_factory.cpp",
         "global_index/global_index_cloning_external_state.cpp",
         "global_index/global_index_cloning_service.cpp",
-        "global_index/global_index_cumulative_metrics.cpp",
-        "global_index/global_index_cumulative_metrics_field_name_provider.cpp",
         "global_index/global_index_inserter.cpp",
-        "global_index/global_index_metrics.cpp",
-        "global_index/global_index_metrics_field_name_provider.cpp",
         "global_index/global_index_server_parameters_gen.cpp",
         "global_index/global_index_util.cpp",
         "global_index_crud_commands_gen.cpp",
@@ -198,42 +194,6 @@ env.Library(
         "query_analysis_writer",
         "sharding_catalog",
         "sharding_logging",
-    ],
-)
-
-env.Library(
-    target="transaction_coordinator",
-    source=[
-        "server_transaction_coordinators_metrics.cpp",
-        "single_transaction_coordinator_stats.cpp",
-        "transaction_coordinator_catalog.cpp",
-        "transaction_coordinator_curop.cpp",
-        "transaction_coordinator_document_gen.cpp",
-        "transaction_coordinator_futures_util.cpp",
-        "transaction_coordinator_metrics_observer.cpp",
-        "transaction_coordinator_params_gen.cpp",
-        "transaction_coordinator_service.cpp",
-        "transaction_coordinator_structures.cpp",
-        "transaction_coordinator_util.cpp",
-        "transaction_coordinator_worker_curop_repository_mongod.cpp",
-        "transaction_coordinator.cpp",
-        "transaction_coordinators_stats_gen.cpp",
-    ],
-    LIBDEPS_PRIVATE=[
-        "$BUILD_DIR/mongo/db/commands/server_status_core",
-        "$BUILD_DIR/mongo/db/commands/txn_cmd_request",
-        "$BUILD_DIR/mongo/db/dbdirectclient",
-        "$BUILD_DIR/mongo/db/internal_transactions_feature_flag",
-        "$BUILD_DIR/mongo/db/not_primary_error_tracker",
-        "$BUILD_DIR/mongo/db/repl/change_stream_oplog_notification",
-        "$BUILD_DIR/mongo/db/repl/wait_for_majority_service",
-        "$BUILD_DIR/mongo/db/rw_concern_d",
-        "$BUILD_DIR/mongo/db/server_feature_flags",
-        "$BUILD_DIR/mongo/db/shard_role_api",
-        "$BUILD_DIR/mongo/db/transaction/transaction",
-        "$BUILD_DIR/mongo/db/vector_clock_mongod",
-        "$BUILD_DIR/mongo/executor/task_executor_pool",
-        "$BUILD_DIR/mongo/s/grid",
     ],
 )
 
@@ -582,7 +542,6 @@ env.Library(
         "sharding_mongod_test_fixture.cpp",
     ],
     LIBDEPS=[
-        "$BUILD_DIR/mongo/db/repl/drop_pending_collection_reaper",
         "$BUILD_DIR/mongo/db/repl/replmocks",
         "$BUILD_DIR/mongo/db/repl/storage_interface_impl",
         "$BUILD_DIR/mongo/db/service_context_d_test_fixture",
@@ -655,9 +614,7 @@ env.CppUnitTest(
         "ddl_lock_manager_test.cpp",
         "global_index/global_index_cloner_fetcher_test.cpp",
         "global_index/global_index_cloning_service_test.cpp",
-        "global_index/global_index_cumulative_metrics_test.cpp",
         "global_index/global_index_inserter_test.cpp",
-        "global_index/global_index_metrics_test.cpp",
         "implicit_collection_creation_test.cpp",
         "metadata_consistency_util_test.cpp",
         "metadata_manager_test.cpp",
@@ -803,6 +760,7 @@ env.CppUnitTest(
         "config/sharding_catalog_manager_remove_shard_test.cpp",
         "config/sharding_catalog_manager_shard_collection_test.cpp",
         "config/sharding_catalog_manager_split_chunk_test.cpp",
+        "config/set_cluster_parameter_coordinator_test.cpp",
         "query_analysis_coordinator_test.cpp",
         "resharding/resharding_coordinator_commit_monitor_test.cpp",
         "resharding/resharding_coordinator_observer_test.cpp",
@@ -848,6 +806,7 @@ env.Benchmark(
     LIBDEPS=[
         "$BUILD_DIR/mongo/db/shard_role_api",
     ],
+    CONSOLIDATED_TARGET="sharding_bm",
 )
 
 env.Benchmark(
@@ -875,6 +834,7 @@ env.Benchmark(
         "$BUILD_DIR/mongo/s/sharding_test_fixture_common",
         "sharding_runtime_d",
     ],
+    CONSOLIDATED_TARGET="sharding_bm",
 )
 
 env.Benchmark(

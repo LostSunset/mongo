@@ -445,7 +445,7 @@ mongo_cc_library(
     ],
     hdrs = [
         "index_key_validate.h",
-        "//src/mongo/db:ttl_collection_cache.h",
+        "//src/mongo/db/ttl:ttl_collection_cache.h",
     ],
     deps = [
         "//src/mongo/db:common",
@@ -535,7 +535,7 @@ mongo_cc_library(
         "//src/mongo/db/index:index_access_method",
         "//src/mongo/db/query/query_stats",
         "//src/mongo/db/storage:duplicate_key_error_info",
-        "//src/mongo/db/storage:key_string",
+        "//src/mongo/db/storage/key_string",
     ],
 )
 
@@ -555,11 +555,11 @@ mongo_cc_library(
         "//src/mongo/db:collection_index_usage_tracker",
         "//src/mongo/db:common",
         "//src/mongo/db:server_base",
-        "//src/mongo/db:ttl_collection_cache",
         "//src/mongo/db:vector_clock",
         "//src/mongo/db/index:index_access_method",
         "//src/mongo/db/repl:repl_coordinator_interface",
         "//src/mongo/db/storage:durable_catalog",
+        "//src/mongo/db/ttl:ttl_collection_cache",
     ],
 )
 
@@ -677,19 +677,18 @@ mongo_cc_library(
         "//src/mongo/db:server_base",
         "//src/mongo/db:server_feature_flags",
         "//src/mongo/db:shard_role",
-        "//src/mongo/db:ttl_collection_cache",
         "//src/mongo/db/concurrency:exception_util",
         "//src/mongo/db/index:index_access_method",
         "//src/mongo/db/query/write_ops",
-        "//src/mongo/db/repl:drop_pending_collection_reaper",
         "//src/mongo/db/stats:top",
         "//src/mongo/db/storage:index_entry_comparison",
-        "//src/mongo/db/storage:key_string",
         "//src/mongo/db/storage:record_store_base",
         "//src/mongo/db/storage:storage_options",
+        "//src/mongo/db/storage/key_string",
         "//src/mongo/db/timeseries:catalog_helper",
         "//src/mongo/db/timeseries:timeseries_conversion_util",
         "//src/mongo/db/timeseries:timeseries_options",
+        "//src/mongo/db/ttl:ttl_collection_cache",
         "//src/mongo/db/views",
         "//src/mongo/db/views:view_catalog_helpers",
     ],
@@ -709,5 +708,30 @@ mongo_cc_library(
         "//src/mongo/db:server_base",
         "//src/mongo/db:service_context",
         "//src/mongo/db/concurrency:deferred_writer",
+    ],
+)
+
+mongo_cc_library(
+    name = "catalog_control",
+    srcs = [
+        "catalog_control.cpp",
+    ],
+    hdrs = [
+        "catalog_control.h",
+    ],
+    deps = [
+        ":catalog_stats",
+        ":collection_catalog",
+        ":database_holder",
+        "//src/mongo/db:index_builds_coordinator_interface",
+        "//src/mongo/db:multitenancy",
+        "//src/mongo/db:rebuild_indexes",
+        "//src/mongo/db:server_base",
+        "//src/mongo/db:service_context",
+        "//src/mongo/db:shard_role",
+        "//src/mongo/db/concurrency:lock_manager",
+        "//src/mongo/db/repl:oplog",
+        "//src/mongo/db/storage:write_unit_of_work",
+        "//src/mongo/db/timeseries:timeseries_extended_range",
     ],
 )

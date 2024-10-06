@@ -434,8 +434,8 @@ void updateCurOpForCommitOrAbort(OperationContext* opCtx, StringData fieldName, 
     auto curOp = CurOp::get(opCtx);
     builder.appendElementsUnique(curOp->opDescription());
     auto opDescObj = builder.obj();
-    curOp->setLogicalOp_inlock(LogicalOp::opCommand);
-    curOp->setOpDescription_inlock(opDescObj);
+    curOp->setLogicalOp(lk, LogicalOp::opCommand);
+    curOp->setOpDescription(lk, opDescObj);
     curOp->ensureStarted();
 }
 
@@ -2261,9 +2261,9 @@ void IndexBuildsCoordinator::updateCurOpOpDescription(OperationContext* opCtx,
     auto curOp = CurOp::get(opCtx);
     builder.appendElementsUnique(curOpDesc ? curOpDesc.value() : curOp->opDescription());
     auto opDescObj = builder.obj();
-    curOp->setLogicalOp_inlock(LogicalOp::opCommand);
-    curOp->setOpDescription_inlock(opDescObj);
-    curOp->setNS_inlock(nss);
+    curOp->setLogicalOp(lk, LogicalOp::opCommand);
+    curOp->setOpDescription(lk, opDescObj);
+    curOp->setNS(lk, nss);
     curOp->ensureStarted();
 }
 
@@ -2365,15 +2365,6 @@ IndexBuildsCoordinator::_filterSpecsAndRegisterBuild(OperationContext* opCtx,
     const auto& nss = collection.get()->ns();
 
     {
-        // Disallow index builds on drop-pending namespaces (system.drop.*) if we are primary.
-        auto replCoord = repl::ReplicationCoordinator::get(opCtx);
-        if (replCoord->getSettings().isReplSet() &&
-            replCoord->canAcceptWritesFor(opCtx, nssOrUuid)) {
-            uassert(ErrorCodes::NamespaceNotFound,
-                    str::stream() << "drop-pending collection: " << nss.toStringForErrorMsg(),
-                    !nss.isDropPendingNamespace());
-        }
-
         // This check is for optimization purposes only as since this lock is released after this,
         // and is acquired again when we build the index in _setUpIndexBuild.
         auto scopedCss = CollectionShardingState::assertCollectionLockedAndAcquire(opCtx, nss);

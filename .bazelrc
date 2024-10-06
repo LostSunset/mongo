@@ -24,6 +24,15 @@ build --experimental_cc_shared_library
 # Reuse sandboxes to save sandbox execution and deletion times.
 build --experimental_reuse_sandbox_directories
 
+# while in hybrid build state, using local unsandboxed linking should be faster. When most of our link
+# targets have been converted (i.e. unittest binaries) and we can BWOB, remote linking should be faster
+# in those cases:
+build --strategy=CppLink=local
+build --strategy=CppArchive=local
+build --strategy=SolibSymlink=local
+build --strategy=ExtractDebugInfo=local
+build --strategy=StripDebugInfo=local
+
 # Aliases for config flags
 build --flag_alias=linkstatic=//bazel/config:linkstatic
 build --flag_alias=compiler_type=//bazel/config:compiler_type
@@ -71,6 +80,14 @@ build --flag_alias=lsan=//bazel/config:lsan
 build --flag_alias=tsan=//bazel/config:tsan
 build --flag_alias=ubsan=//bazel/config:ubsan
 
+--config=remote_link
+build:remote_link --strategy=CppLink=remote
+build:remote_link --strategy=CppArchive=remote
+build:remote_link --strategy=SolibSymlink=remote
+build:remote_link --strategy=ExtractDebugInfo=remote
+build:remote_link --strategy=StripDebugInfo=remote
+build:remote_link --features=-thin_archive
+
 # Disable the default compiler flags to avoid certain flags that conflict with flags we setup.
 build:windows --features=-smaller_binary
 build:windows --features=-frame_pointer
@@ -98,10 +115,14 @@ build:windows --cxxopt=-DNTDDI_VERSION=0x0A000000
 #                     sets COMPILER_MSVC on windows.
 build:windows --cxxopt=-UCOMPILER_MSVC
 
-# remote execution is the default, but only mongodb employees will be able to access
-# the engflow cluster. External builders should use the local option below
-# remote execution configs
+# Remote execution and caching is the default, but only mongodb employees will be able to access
+# the engflow cluster. External builders should use the --config=local option
+
+# Enable remote build execution:
 build:linux --remote_executor=grpcs://sodalite.cluster.engflow.com
+build:linux --jobs=200
+
+# Enable remote cache (also necessary for remote build execution):
 build --remote_cache=grpcs://sodalite.cluster.engflow.com
 build --bes_backend=grpcs://sodalite.cluster.engflow.com
 build --bes_results_url=https://sodalite.cluster.engflow.com/invocation/
@@ -109,7 +130,6 @@ build --experimental_remote_cache_compression=true
 build --grpc_keepalive_time=30s
 build --nolegacy_important_outputs
 build --bes_keywords=repo:mongo
-build --jobs=200
 common --remote_upload_local_results=False
 
 # Settings specific for clang-tidy
