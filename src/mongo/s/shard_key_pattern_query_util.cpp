@@ -74,6 +74,7 @@
 #include "mongo/logv2/log_component.h"
 #include "mongo/logv2/redaction.h"
 #include "mongo/s/chunk.h"
+#include "mongo/s/shard_targeting_helpers.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/transitional_tools_do_not_use/vector_spooling.h"
@@ -197,7 +198,7 @@ StatusWith<BSONObj> extractShardKeyFromBasicQuery(OperationContext* opCtx,
     findCommand->setFilter(basicQuery.getOwned());
 
     auto statusWithCQ = CanonicalQuery::make(
-        {.expCtx = makeExpressionContext(opCtx, *findCommand),
+        {.expCtx = ExpressionContextBuilder{}.fromRequest(opCtx, *findCommand).build(),
          .parsedFind = ParsedFindCommandParams{
              .findCommand = std::move(findCommand),
              .allowedFeatures = MatchExpressionParser::kAllowAllSpecialFeatures}});

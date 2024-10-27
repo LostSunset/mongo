@@ -833,7 +833,8 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, AsyncOpTimeoutWithOpCtxDeadl
     auto stopWatch = serviceContext->getPreciseClockSource()->makeStopWatch();
     opCtx->setDeadlineByDate(stopWatch.start() + opCtxDeadline, ErrorCodes::ExceededTimeLimit);
 
-    auto request = makeTestCommand(requestTimeout, makeSleepCmdObj(), opCtx.get());
+    auto request = makeTestCommand(
+        requestTimeout, makeSleepCmdObj(), opCtx.get(), false, ErrorCodes::MaxTimeMSExpired);
 
     auto deferred = runCommand(cb, request);
     // The time returned in result.elapsed is measured from when the command started, which happens
@@ -851,7 +852,7 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, AsyncOpTimeoutWithOpCtxDeadl
         return;
     }
 
-    ASSERT_EQ(ErrorCodes::NetworkInterfaceExceededTimeLimit, result.status);
+    ASSERT_EQ(ErrorCodes::MaxTimeMSExpired, result.status);
     ASSERT(result.elapsed);
 
     // check that the request timeout uses the smaller of the operation context deadline and
@@ -1283,8 +1284,8 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, ShutdownBeforeSendRequest) {
     auto opCtx = client->makeOperationContext();
     ASSERT(shutdownComplete.waitFor(opCtx.get(), Seconds(30)));
 
-    ASSERT(pf.future.isReady());
-    ASSERT_EQ(pf.future.get().status, ErrorCodes::ShutdownInProgress);
+    // Since shutdown has completed, this future should be ready very soon if not immediately.
+    ASSERT_EQ(getWithTimeout(pf.future, *opCtx, Seconds(1)).status, ErrorCodes::ShutdownInProgress);
 
     assertNumOps(1u, 0u, 0u, 0u);
 
@@ -1332,8 +1333,8 @@ TEST_WITH_AND_WITHOUT_BATON_F(NetworkInterfaceTest, ShutdownAfterSendRequest) {
     auto opCtx = client->makeOperationContext();
     ASSERT(shutdownComplete.waitFor(opCtx.get(), Seconds(30)));
 
-    ASSERT(pf.future.isReady());
-    ASSERT_EQ(pf.future.get().status, ErrorCodes::ShutdownInProgress);
+    // Since shutdown has completed, this future should be ready very soon if not immediately.
+    ASSERT_EQ(getWithTimeout(pf.future, *opCtx, Seconds(1)).status, ErrorCodes::ShutdownInProgress);
 
     assertNumOps(1u, 0u, 0u, 0u);
 

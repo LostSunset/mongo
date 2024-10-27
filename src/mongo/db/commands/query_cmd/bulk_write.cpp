@@ -127,6 +127,7 @@
 #include "mongo/db/storage/snapshot.h"
 #include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/timeseries/timeseries_update_delete_util.h"
+#include "mongo/db/timeseries/write_ops/timeseries_write_ops.h"
 #include "mongo/db/transaction/retryable_writes_stats.h"
 #include "mongo/db/transaction/transaction_participant.h"
 #include "mongo/db/transaction_resources.h"
@@ -683,7 +684,7 @@ void handleGroupedTimeseriesInserts(OperationContext* opCtx,
                                     write_ops_exec::WriteResult& out) {
     size_t numOps = docs.size();
     auto request = getConsecutiveInsertRequest(req, firstOpIdx, docs, nsInfoEntry);
-    auto insertReply = write_ops_exec::performTimeseriesWrites(opCtx, request, curOp);
+    auto insertReply = timeseries::write_ops::performTimeseriesWrites(opCtx, request, curOp);
     populateWriteResultWithInsertReply(numOps, req.getOrdered(), insertReply, out);
 }
 
@@ -1498,9 +1499,7 @@ public:
 
             // We have replies left that will not make the first batch. Need to construct a cursor.
             if (numRepliesInFirstBatch != replies.size()) {
-                auto expCtx = make_intrusive<ExpressionContext>(
-                    opCtx, std::unique_ptr<CollatorInterface>(nullptr), ns());
-
+                auto expCtx = ExpressionContextBuilder{}.opCtx(opCtx).ns(ns()).build();
                 std::unique_ptr<PlanExecutor, PlanExecutor::Deleter> exec;
                 auto ws = std::make_unique<WorkingSet>();
                 auto root = std::make_unique<QueuedDataStage>(expCtx.get(), ws.get());

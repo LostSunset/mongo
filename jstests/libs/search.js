@@ -114,3 +114,108 @@ export function updateSearchIndex(coll, keys, blockUntilSearchIndexQueryable = {
     }
     return _runUpdateSearchIndexOnShard(coll, keys, blockOnIndexQueryable);
 }
+function _runDropSearchIndexOnShard(coll, keys, shardConn) {
+    let shardDB = shardConn != undefined
+        ? shardConn.getDB("admin").getSiblingDB(coll.getDB().getName())
+        : coll.getDB();
+    let collName = coll.getName();
+
+    let name = keys["name"];
+    return assert.commandWorked(shardDB.runCommand({dropSearchIndex: collName, name}));
+}
+
+export function dropSearchIndex(coll, keys) {
+    if (Object.keys(keys).length != 1 || !keys.hasOwnProperty('name')) {
+        /**
+         * dropSearchIndex server command accepts search index ID or name. However, the
+         * createSearchIndex library helper only returns the response from issuing the creation
+         * command on the last shard. This is problematic for sharded configurations as a server dev
+         * won't have all the IDs associated with the search index across all of the shards. To
+         * ensure correctness, the dropSearchIndex library helper will only accept specifiying
+         * search index by name.
+         */
+        throw new Error("dropSearchIndex library helper only accepts a search index name");
+    }
+
+    // Please see block comment at the top of this file to understand the sharded implementation.
+    if (FixtureHelpers.isSharded(coll)) {
+        let response = {};
+        let topology = DiscoverTopology.findConnectedNodes(coll.getDB().getMongo());
+
+        for (const shardName of Object.keys(topology.shards)) {
+            topology.shards[shardName].nodes.forEach((node) => {
+                let sconn = new Mongo(node);
+                response = _runDropSearchIndexOnShard(coll, keys, sconn);
+            });
+        }
+        return response;
+    }
+    return _runDropSearchIndexOnShard(coll, keys);
+}
+
+function _runCreateSearchIndexOnShard(coll, keys, blockOnIndexQueryable, shardConn) {
+    let shardDB = shardConn != undefined
+        ? shardConn.getDB("admin").getSiblingDB(coll.getDB().getName())
+        : coll.getDB();
+    let response = assert.commandWorked(
+        shardDB.runCommand({createSearchIndexes: coll.getName(), indexes: [keys]}));
+
+    if (!blockOnIndexQueryable) {
+        return;
+    }
+
+    let name = response["indexesCreated"][0]["name"];
+    let searchIndexArray =
+        shardDB[coll.getName()].aggregate([{$listSearchIndexes: {name}}]).toArray();
+    assert.eq(searchIndexArray.length, 1, searchIndexArray);
+    let queryable = searchIndexArray[0]["queryable"];
+
+    if (queryable) {
+        return response;
+    }
+
+    assert.soon(() => shardDB[coll.getName()]
+                          .aggregate([{$listSearchIndexes: {name}}])
+                          .toArray()[0]["queryable"]);
+    return assert.commandWorked(response);
+}
+
+export function createSearchIndex(coll, keys, blockUntilSearchIndexQueryable) {
+    if (arguments.length > 3) {
+        throw new Error("createSearchIndex accepts up to 3 arguments");
+    }
+
+    let blockOnIndexQueryable = true;
+    if (arguments.length == 3) {
+        // The third arg may only be the "blockUntilSearchIndexQueryable" flag.
+        if (typeof (blockUntilSearchIndexQueryable) != 'object' ||
+            Object.keys(blockUntilSearchIndexQueryable).length != 1 ||
+            !blockUntilSearchIndexQueryable.hasOwnProperty('blockUntilSearchIndexQueryable')) {
+            throw new Error(
+                "createSearchIndex only accepts index definition object and blockUntilSearchIndexQueryable object");
+        }
+
+        blockOnIndexQueryable = blockUntilSearchIndexQueryable["blockUntilSearchIndexQueryable"];
+        if (typeof blockOnIndexQueryable != "boolean") {
+            throw new Error("'blockUntilSearchIndexQueryable' argument must be a boolean");
+        }
+    }
+
+    if (!keys.hasOwnProperty('definition')) {
+        throw new Error("createSearchIndex must have a definition");
+    }
+    // Please see block comment at the top of this file to understand the sharded implementation.
+    if (FixtureHelpers.isSharded(coll)) {
+        let response = {};
+        let topology = DiscoverTopology.findConnectedNodes(coll.getDB().getMongo());
+
+        for (const shardName of Object.keys(topology.shards)) {
+            topology.shards[shardName].nodes.forEach((node) => {
+                let sconn = new Mongo(node);
+                response = _runCreateSearchIndexOnShard(coll, keys, blockOnIndexQueryable, sconn);
+            });
+        }
+        return response;
+    }
+    return _runCreateSearchIndexOnShard(coll, keys, blockOnIndexQueryable);
+}

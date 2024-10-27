@@ -55,13 +55,13 @@
 #include "mongo/db/catalog/collection.h"
 #include "mongo/db/catalog/collection_catalog.h"
 #include "mongo/db/catalog/collection_options.h"
-#include "mongo/db/catalog/collection_validation.h"
 #include "mongo/db/catalog/create_collection.h"
 #include "mongo/db/catalog/database.h"
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/catalog/drop_collection.h"
 #include "mongo/db/catalog/index_catalog.h"
 #include "mongo/db/catalog/multi_index_block.h"
+#include "mongo/db/catalog/validate/collection_validation.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/change_stream_pre_image_util.h"
 #include "mongo/db/change_stream_serverless_helpers.h"
@@ -891,8 +891,8 @@ void startupRecovery(OperationContext* opCtx,
             ensureCollectionProperties(opCtx, dbName, EnsureIndexPolicy::kBuildMissing));
 
         if (usingReplication) {
-            // We only care about _id indexes and drop-pending collections if we are in a replset.
-            checkForIdIndexesAndDropPendingCollections(opCtx, dbName);
+            // We only care about _id indexes if we are in a replset.
+            checkForIdIndexes(opCtx, dbName);
             // Ensure oplog is capped (mongodb does not guarantee order of inserts on noncapped
             // collections)
             if (dbName == DatabaseName::kLocal) {

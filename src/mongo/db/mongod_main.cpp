@@ -147,7 +147,6 @@
 #include "mongo/db/read_write_concern_defaults.h"
 #include "mongo/db/read_write_concern_defaults_cache_lookup_mongod.h"
 #include "mongo/db/repl/base_cloner.h"
-#include "mongo/db/repl/drop_pending_collection_reaper.h"
 #include "mongo/db/repl/initial_syncer_factory.h"
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/primary_only_service.h"
@@ -272,6 +271,7 @@
 #include "mongo/util/allocator_thread.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/background.h"
+#include "mongo/util/buildinfo.h"
 #include "mongo/util/clock_source.h"
 #include "mongo/util/cmdline_utils/censor_cmdline.h"
 #include "mongo/util/concurrency/idle_thread_block.h"
@@ -356,10 +356,12 @@ void logStartup(OperationContext* opCtx) {
     toLog.append("pid", ProcessId::getCurrent().asLongLong());
 
 
-    BSONObjBuilder buildinfo(toLog.subobjStart("buildinfo"));
-    VersionInfoInterface::instance().appendBuildInfo(&buildinfo);
-    appendStorageEngineList(opCtx->getServiceContext(), &buildinfo);
-    buildinfo.doneFast();
+    {
+        BSONObjBuilder buildinfo(toLog.subobjStart("buildinfo"));
+        auto info = getBuildInfo();
+        info.setStorageEngines(getStorageEngineNames(opCtx->getServiceContext()));
+        info.serialize(&buildinfo);
+    }
 
     BSONObj o = toLog.obj();
 
@@ -1414,10 +1416,6 @@ void setUpReplication(ServiceContext* serviceContext) {
             storageInterface, std::move(consistencyMarkers), std::move(recovery)));
     auto replicationProcess = repl::ReplicationProcess::get(serviceContext);
 
-    repl::DropPendingCollectionReaper::set(
-        serviceContext, std::make_unique<repl::DropPendingCollectionReaper>(storageInterface));
-    auto dropPendingCollectionReaper = repl::DropPendingCollectionReaper::get(serviceContext);
-
     repl::TopologyCoordinator::Options topoCoordOptions;
     topoCoordOptions.maxSyncSourceLagSecs = Seconds(repl::maxSyncSourceLagSecs);
     topoCoordOptions.clusterRole = serverGlobalParams.clusterRole;
@@ -1426,7 +1424,7 @@ void setUpReplication(ServiceContext* serviceContext) {
         serviceContext,
         getGlobalReplSettings(),
         std::make_unique<repl::ReplicationCoordinatorExternalStateImpl>(
-            serviceContext, dropPendingCollectionReaper, storageInterface, replicationProcess),
+            serviceContext, storageInterface, replicationProcess),
         makeReplicationExecutor(serviceContext),
         std::make_unique<repl::TopologyCoordinator>(topoCoordOptions),
         replicationProcess,
@@ -2114,12 +2112,10 @@ int mongod_main(int argc, char* argv[]) {
 
     auto* service = [] {
         try {
-            auto serviceContextHolder = ServiceContext::make();
+            auto serviceContextHolder =
+                ServiceContext::make(FastClockSourceFactory::create(Milliseconds(10)));
             auto* serviceContext = serviceContextHolder.get();
 
-            // This FastClockSourceFactory creates a background thread ClockSource. It must be set
-            // on ServiceContext before any other threads can get and use it.
-            serviceContext->setFastClockSource(FastClockSourceFactory::create(Milliseconds(10)));
             setGlobalServiceContext(std::move(serviceContextHolder));
 
             return serviceContext;

@@ -736,7 +736,6 @@ TEST_F(OpObserverTest, OnDropCollectionReturnsDropOpTime) {
                                     nss,
                                     uuid,
                                     0U,
-                                    OpObserver::CollectionDropType::kTwoPhase,
                                     /*markFromMigrate=*/false);
         dropOpTime = OpObserver::Times::get(opCtx.get()).reservedOpTimes.front();
         wunit.commit();
@@ -773,7 +772,6 @@ TEST_F(OpObserverTest, OnDropCollectionInlcudesTenantId) {
                                     nss,
                                     uuid,
                                     0U,
-                                    OpObserver::CollectionDropType::kTwoPhase,
                                     /*markFromMigrate=*/false);
         wunit.commit();
     }
@@ -2921,11 +2919,8 @@ class BatchedWriteOutputsTest : public OpObserverTest {
 public:
     void setUp() override {
         OpObserverTest::setUp();
-
-        auto opObserverRegistry = std::make_unique<OpObserverRegistry>();
-        opObserverRegistry->addObserver(
+        opObserverRegistry()->addObserver(
             std::make_unique<OpObserverImpl>(std::make_unique<OperationLoggerImpl>()));
-        getServiceContext()->setOpObserver(std::move(opObserverRegistry));
     }
 
 protected:

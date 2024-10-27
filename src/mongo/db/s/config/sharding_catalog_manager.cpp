@@ -109,7 +109,7 @@
 #include "mongo/s/catalog/type_chunk.h"
 #include "mongo/s/catalog/type_collection.h"
 #include "mongo/s/catalog/type_collection_gen.h"
-#include "mongo/s/catalog/type_config_version.h"
+#include "mongo/s/catalog/type_config_version_gen.h"
 #include "mongo/s/catalog/type_namespace_placement_gen.h"
 #include "mongo/s/catalog/type_shard.h"
 #include "mongo/s/catalog/type_tags.h"
@@ -355,9 +355,9 @@ public:
     PipelineBuilder(OperationContext* opCtx,
                     const NamespaceString& nss,
                     std::vector<NamespaceString>&& resolvedNamespaces)
-        : _expCtx{make_intrusive<ExpressionContext>(opCtx, nullptr /*collator*/, nss)} {
+        : _expCtx{ExpressionContextBuilder{}.opCtx(opCtx).ns(nss).build()} {
 
-        StringMap<ExpressionContext::ResolvedNamespace> resolvedNamespacesMap;
+        StringMap<ResolvedNamespace> resolvedNamespacesMap;
 
         for (const auto& collNs : resolvedNamespaces) {
             resolvedNamespacesMap[collNs.coll()] = {collNs, std::vector<BSONObj>() /* pipeline */};
@@ -774,7 +774,7 @@ Status ShardingCatalogManager::_initConfigVersion(OperationContext* opCtx) {
     newVersion.setClusterId(OID::gen());
 
     auto insertStatus = _localCatalogClient->insertConfigDocument(
-        opCtx, VersionType::ConfigNS, newVersion.toBSON(), kNoWaitWriteConcern);
+        opCtx, NamespaceString::kConfigVersionNamespace, newVersion.toBSON(), kNoWaitWriteConcern);
     return insertStatus;
 }
 
