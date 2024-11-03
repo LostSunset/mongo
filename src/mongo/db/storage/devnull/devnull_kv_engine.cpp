@@ -48,6 +48,7 @@
 #include "mongo/db/storage/key_string/key_string.h"
 #include "mongo/db/storage/record_data.h"
 #include "mongo/db/storage/record_store.h"
+#include "mongo/db/storage/record_store_base.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/recovery_unit_noop.h"
 #include "mongo/db/storage/sorted_data_interface.h"
@@ -77,17 +78,16 @@ public:
     void setSaveStorageCursorOnDetachFromOperationContext(bool) override {}
 };
 
-class DevNullRecordStore : public RecordStore {
+class DevNullRecordStore : public RecordStoreBase {
 public:
-    DevNullRecordStore(const NamespaceString& nss,
-                       boost::optional<UUID> uuid,
+    class Capped;
+    class Oplog;
+
+    DevNullRecordStore(boost::optional<UUID> uuid,
                        StringData identName,
                        const CollectionOptions& options,
                        KeyFormat keyFormat)
-        : RecordStore(uuid, identName, options.capped),
-          _options(options),
-          _keyFormat(keyFormat),
-          _ns(nss) {
+        : RecordStoreBase(uuid, identName), _options(options), _keyFormat(keyFormat) {
         _numInserts = 0;
         _dummy = BSON("_id" << 1);
     }
@@ -96,15 +96,11 @@ public:
         return "devnull";
     }
 
-    NamespaceString ns(OperationContext* opCtx) const override {
-        return _ns;
-    }
-
-    long long dataSize(OperationContext* opCtx) const override {
+    long long dataSize() const override {
         return 0;
     }
 
-    long long numRecords(OperationContext* opCtx) const override {
+    long long numRecords() const override {
         return 0;
     }
 
@@ -116,45 +112,18 @@ public:
         return _keyFormat;
     }
 
-    int64_t storageSize(OperationContext* opCtx,
+    int64_t storageSize(RecoveryUnit& ru,
                         BSONObjBuilder* extraInfo = nullptr,
                         int infoLevel = 0) const override {
         return 0;
     }
 
-    bool findRecord(OperationContext* opCtx, const RecordId& loc, RecordData* rd) const override {
-        return false;
-    }
-
-    void doDeleteRecord(OperationContext* opCtx, const RecordId& dl) override {}
-
-    Status doInsertRecords(OperationContext* opCtx,
-                           std::vector<Record>* inOutRecords,
-                           const std::vector<Timestamp>& timestamps) override {
-        _numInserts += inOutRecords->size();
-        for (auto& record : *inOutRecords) {
-            record.id = RecordId(6, 4);
-        }
-        return Status::OK();
-    }
-
-    Status doUpdateRecord(OperationContext* opCtx,
-                          const RecordId& oldLocation,
-                          const char* data,
-                          int len) override {
-        return Status::OK();
+    int64_t freeStorageSize(RecoveryUnit&) const override {
+        return 0;
     }
 
     bool updateWithDamagesSupported() const override {
         return false;
-    }
-
-    StatusWith<RecordData> doUpdateWithDamages(OperationContext* opCtx,
-                                               const RecordId& loc,
-                                               const RecordData& oldRec,
-                                               const char* damageSource,
-                                               const DamageVector& damages) override {
-        MONGO_UNREACHABLE;
     }
 
     void printRecordMetadata(OperationContext* opCtx,
@@ -168,32 +137,37 @@ public:
         return std::make_unique<EmptyRecordCursor>();
     }
 
-    Status doTruncate(OperationContext* opCtx) override {
-        return Status::OK();
+    std::unique_ptr<RecordCursor> getRandomCursor(OperationContext*) const override {
+        return {};
     }
 
-    Status doRangeTruncate(OperationContext* opCtx,
-                           const RecordId& minRecordId,
-                           const RecordId& maxRecordId,
-                           int64_t hintDataSizeDiff,
-                           int64_t hintNumRecordsDiff) override {
-        return Status::OK();
+    bool compactSupported() const override {
+        return false;
     }
 
-    void doCappedTruncateAfter(OperationContext* opCtx,
-                               const RecordId& end,
-                               bool inclusive,
-                               const AboutToDeleteRecordCallback& aboutToDelete) override {}
+    void validate(RecoveryUnit&, bool full, ValidateResults*) override {}
 
-    void appendNumericCustomStats(OperationContext* opCtx,
+    void appendNumericCustomStats(RecoveryUnit& ru,
                                   BSONObjBuilder* result,
                                   double scale) const override {
         result->appendNumber("numInserts", _numInserts);
     }
 
-    void updateStatsAfterRepair(OperationContext* opCtx,
-                                long long numRecords,
-                                long long dataSize) override {}
+    void appendAllCustomStats(RecoveryUnit& ru,
+                              BSONObjBuilder* result,
+                              double scale) const override {
+        appendNumericCustomStats(ru, result, scale);
+    }
+
+    void updateStatsAfterRepair(long long numRecords, long long dataSize) override {}
+
+    RecordStore::Capped* capped() override {
+        return nullptr;
+    }
+
+    RecordStore::Oplog* oplog() override {
+        return nullptr;
+    }
 
     RecordId getLargestKey(OperationContext* opCtx) const final {
         return RecordId();
@@ -208,11 +182,111 @@ public:
     };
 
 private:
+    void _deleteRecord(OperationContext* opCtx, const RecordId& dl) override {}
+
+    Status _insertRecords(OperationContext* opCtx,
+                          std::vector<Record>* inOutRecords,
+                          const std::vector<Timestamp>& timestamps) override {
+        _numInserts += inOutRecords->size();
+        for (auto& record : *inOutRecords) {
+            record.id = RecordId(6, 4);
+        }
+        return Status::OK();
+    }
+
+    Status _updateRecord(OperationContext* opCtx,
+                         const RecordId& oldLocation,
+                         const char* data,
+                         int len) override {
+        return Status::OK();
+    }
+
+    StatusWith<RecordData> _updateWithDamages(OperationContext* opCtx,
+                                              const RecordId& loc,
+                                              const RecordData& oldRec,
+                                              const char* damageSource,
+                                              const DamageVector& damages) override {
+        MONGO_UNREACHABLE;
+    }
+
+    Status _truncate(OperationContext* opCtx) override {
+        return Status::OK();
+    }
+
+    Status _rangeTruncate(OperationContext* opCtx,
+                          const RecordId& minRecordId,
+                          const RecordId& maxRecordId,
+                          int64_t hintDataSizeDiff,
+                          int64_t hintNumRecordsDiff) override {
+        return Status::OK();
+    }
+
+    StatusWith<int64_t> _compact(OperationContext*, const CompactOptions&) override {
+        return Status::OK();
+    }
+
     CollectionOptions _options;
     KeyFormat _keyFormat;
     long long _numInserts;
     BSONObj _dummy;
-    NamespaceString _ns;
+};
+
+class DevNullRecordStore::Capped : public DevNullRecordStore, public RecordStoreBase::Capped {
+public:
+    Capped(boost::optional<UUID> uuid,
+           StringData identName,
+           const CollectionOptions& options,
+           KeyFormat keyFormat)
+        : DevNullRecordStore(uuid, identName, options, keyFormat) {}
+
+    RecordStore::Capped* capped() override {
+        return this;
+    }
+
+private:
+    void _truncateAfter(OperationContext*,
+                        const RecordId&,
+                        bool inclusive,
+                        const AboutToDeleteRecordCallback&) override {}
+};
+
+class DevNullRecordStore::Oplog final : public DevNullRecordStore::Capped,
+                                        public RecordStore::Oplog {
+public:
+    Oplog(UUID uuid, StringData identName, const CollectionOptions& options)
+        : DevNullRecordStore::Capped(uuid, identName, options, KeyFormat::Long) {}
+
+    RecordStore::Capped* capped() override {
+        return this;
+    }
+
+    RecordStore::Oplog* oplog() override {
+        return this;
+    }
+
+    bool selfManagedTruncation() const override {
+        return false;
+    }
+
+    Status updateSize(long long size) override {
+        return Status::OK();
+    }
+
+    void reclaim(OperationContext*) override {}
+
+    void getTruncateStats(BSONObjBuilder&) const override {}
+
+    StatusWith<Timestamp> getLatestTimestamp(RecoveryUnit&) const override {
+        return Status::OK();
+    }
+
+    StatusWith<Timestamp> getEarliestTimestamp(RecoveryUnit&) override {
+        return Status::OK();
+    }
+
+    std::shared_ptr<CollectionTruncateMarkers> getCollectionTruncateMarkers() override {
+        return nullptr;
+    }
 };
 
 class DevNullSortedDataBuilderInterface : public SortedDataBuilderInterface {
@@ -222,9 +296,9 @@ class DevNullSortedDataBuilderInterface : public SortedDataBuilderInterface {
 public:
     DevNullSortedDataBuilderInterface() {}
 
-    std::variant<Status, SortedDataInterface::DuplicateKey> addKey(
+    boost::optional<SortedDataInterface::DuplicateKey> addKey(
         const key_string::Value& keyString) override {
-        return Status::OK();
+        return {};
     }
 };
 
@@ -256,7 +330,7 @@ public:
                  bool dupsAllowed) override {}
 
     boost::optional<DuplicateKey> dupKeyCheck(OperationContext* opCtx,
-                                              const key_string::Value& keyString) override {
+                                              const SortedDataKeyValueView& keyString) override {
         return boost::none;
     }
 
@@ -322,10 +396,14 @@ std::unique_ptr<RecordStore> DevNullKVEngine::getRecordStore(OperationContext* o
                                                              StringData ident,
                                                              const CollectionOptions& options) {
     if (ident == "_mdb_catalog") {
-        return std::make_unique<EphemeralForTestRecordStore>(
-            nss, options.uuid, ident, &_catalogInfo);
+        return std::make_unique<EphemeralForTestRecordStore>(options.uuid, ident, &_catalogInfo);
+    } else if (nss == NamespaceString::kRsOplogNamespace) {
+        return std::make_unique<DevNullRecordStore::Oplog>(*options.uuid, ident, options);
+    } else if (options.capped) {
+        return std::make_unique<DevNullRecordStore::Capped>(
+            options.uuid, ident, options, KeyFormat::Long);
     }
-    return std::make_unique<DevNullRecordStore>(nss, options.uuid, ident, options, KeyFormat::Long);
+    return std::make_unique<DevNullRecordStore>(options.uuid, ident, options, KeyFormat::Long);
 }
 
 std::unique_ptr<RecordStore> DevNullKVEngine::getTemporaryRecordStore(OperationContext* opCtx,
@@ -337,11 +415,8 @@ std::unique_ptr<RecordStore> DevNullKVEngine::getTemporaryRecordStore(OperationC
 std::unique_ptr<RecordStore> DevNullKVEngine::makeTemporaryRecordStore(OperationContext* opCtx,
                                                                        StringData ident,
                                                                        KeyFormat keyFormat) {
-    return std::make_unique<DevNullRecordStore>(NamespaceString::kEmpty /* ns */,
-                                                boost::none /* uuid */,
-                                                ident,
-                                                CollectionOptions(),
-                                                keyFormat);
+    return std::make_unique<DevNullRecordStore>(
+        boost::none /* uuid */, ident, CollectionOptions(), keyFormat);
 }
 
 std::unique_ptr<SortedDataInterface> DevNullKVEngine::getSortedDataInterface(

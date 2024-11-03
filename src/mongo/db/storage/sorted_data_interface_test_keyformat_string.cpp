@@ -30,14 +30,8 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/optional/optional.hpp>
 #include <cstring>
-#include <memory>
 #include <string>
 
-#include "mongo/base/error_codes.h"
-#include "mongo/base/status.h"
-#include "mongo/base/string_data.h"
-#include "mongo/db/concurrency/d_concurrency.h"
-#include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/record_id.h"
 #include "mongo/db/record_id_helpers.h"
 #include "mongo/db/service_context.h"
@@ -59,7 +53,6 @@ TEST(SortedDataInterface, KeyFormatStringInsertDuplicates) {
     const std::unique_ptr<SortedDataInterface> sorted(harnessHelper->newSortedDataInterface(
         /*unique=*/false, /*partial=*/false, KeyFormat::String));
     const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     ASSERT(sorted->isEmpty(opCtx.get()));
 
@@ -75,7 +68,8 @@ TEST(SortedDataInterface, KeyFormatStringInsertDuplicates) {
     RecordId rid3(buf3, 12);
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid1),
                                             /*dupsAllowed*/ true));
@@ -85,7 +79,7 @@ TEST(SortedDataInterface, KeyFormatStringInsertDuplicates) {
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid3),
                                             /*dupsAllowed*/ true));
-        uow.commit();
+        txn.commit();
     }
     ASSERT_EQUALS(3, sorted->numEntries(opCtx.get()));
 
@@ -132,7 +126,6 @@ TEST(SortedDataInterface, KeyFormatStringUniqueInsertRemoveDuplicates) {
     const std::unique_ptr<SortedDataInterface> sorted(harnessHelper->newSortedDataInterface(
         /*unique=*/true, /*partial=*/false, KeyFormat::String));
     const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     ASSERT(sorted->isEmpty(opCtx.get()));
 
@@ -145,7 +138,8 @@ TEST(SortedDataInterface, KeyFormatStringUniqueInsertRemoveDuplicates) {
     RecordId rid3(buf3.c_str(), 12);
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid1),
                                             /*dupsAllowed*/ true));
@@ -168,13 +162,14 @@ TEST(SortedDataInterface, KeyFormatStringUniqueInsertRemoveDuplicates) {
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid3),
                                             /*dupsAllowed*/ true));
-        uow.commit();
+        txn.commit();
     }
 
     ASSERT_EQUALS(2, sorted->numEntries(opCtx.get()));
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         sorted->unindex(opCtx.get(),
                         makeKeyString(sorted.get(), key1, rid1),
                         /*dupsAllowed*/ true);
@@ -182,7 +177,7 @@ TEST(SortedDataInterface, KeyFormatStringUniqueInsertRemoveDuplicates) {
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key2, rid1),
                                             /*dupsAllowed*/ true));
-        uow.commit();
+        txn.commit();
     }
 
     ASSERT_EQUALS(2, sorted->numEntries(opCtx.get()));
@@ -226,7 +221,6 @@ TEST(SortedDataInterface, KeyFormatStringSetEndPosition) {
     const std::unique_ptr<SortedDataInterface> sorted(harnessHelper->newSortedDataInterface(
         /*unique=*/false, /*partial=*/false, KeyFormat::String));
     const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     ASSERT(sorted->isEmpty(opCtx.get()));
 
@@ -242,7 +236,8 @@ TEST(SortedDataInterface, KeyFormatStringSetEndPosition) {
     RecordId rid3(buf3, 12);
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid1),
                                             /*dupsAllowed*/ true));
@@ -252,7 +247,7 @@ TEST(SortedDataInterface, KeyFormatStringSetEndPosition) {
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key3, rid3),
                                             /*dupsAllowed*/ true));
-        uow.commit();
+        txn.commit();
     }
     ASSERT_EQUALS(3, sorted->numEntries(opCtx.get()));
 
@@ -297,7 +292,6 @@ TEST(SortedDataInterface, KeyFormatStringUnindex) {
     const std::unique_ptr<SortedDataInterface> sorted(harnessHelper->newSortedDataInterface(
         /*unique=*/false, /*partial=*/false, KeyFormat::String));
     const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     ASSERT(sorted->isEmpty(opCtx.get()));
 
@@ -313,7 +307,8 @@ TEST(SortedDataInterface, KeyFormatStringUnindex) {
     RecordId rid3(buf3, 12);
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid1),
                                             /*dupsAllowed*/ true));
@@ -323,12 +318,13 @@ TEST(SortedDataInterface, KeyFormatStringUnindex) {
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid3),
                                             /*dupsAllowed*/ true));
-        uow.commit();
+        txn.commit();
     }
     ASSERT_EQUALS(3, sorted->numEntries(opCtx.get()));
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         sorted->unindex(opCtx.get(),
                         makeKeyString(sorted.get(), key1, rid1),
                         /*dupsAllowed*/ true);
@@ -338,7 +334,7 @@ TEST(SortedDataInterface, KeyFormatStringUnindex) {
         sorted->unindex(opCtx.get(),
                         makeKeyString(sorted.get(), key1, rid3),
                         /*dupsAllowed*/ true);
-        uow.commit();
+        txn.commit();
     }
     ASSERT_EQUALS(0, sorted->numEntries(opCtx.get()));
 }
@@ -348,7 +344,6 @@ TEST(SortedDataInterface, KeyFormatStringUniqueUnindex) {
     const std::unique_ptr<SortedDataInterface> sorted(harnessHelper->newSortedDataInterface(
         /*unique=*/true, /*partial=*/false, KeyFormat::String));
     const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     ASSERT(sorted->isEmpty(opCtx.get()));
 
@@ -361,7 +356,8 @@ TEST(SortedDataInterface, KeyFormatStringUniqueUnindex) {
     RecordId rid3(buf3.c_str(), 12);
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key1, rid1),
                                             /*dupsAllowed*/ false));
@@ -371,12 +367,13 @@ TEST(SortedDataInterface, KeyFormatStringUniqueUnindex) {
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                             makeKeyString(sorted.get(), key3, rid3),
                                             /*dupsAllowed*/ false));
-        uow.commit();
+        txn.commit();
     }
     ASSERT_EQUALS(3, sorted->numEntries(opCtx.get()));
 
     {
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         // Does not exist, does nothing.
         sorted->unindex(opCtx.get(),
                         makeKeyString(sorted.get(), key1, rid3),
@@ -392,7 +389,7 @@ TEST(SortedDataInterface, KeyFormatStringUniqueUnindex) {
                         makeKeyString(sorted.get(), key3, rid3),
                         /*dupsAllowed*/ false);
 
-        uow.commit();
+        txn.commit();
     }
     ASSERT_EQUALS(0, sorted->numEntries(opCtx.get()));
 }
@@ -402,17 +399,17 @@ TEST(SortedDataInterface, InsertReservedRecordIdStr) {
     const std::unique_ptr<SortedDataInterface> sorted(harnessHelper->newSortedDataInterface(
         /*unique=*/false, /*partial=*/false, KeyFormat::String));
     const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     ASSERT(sorted->isEmpty(opCtx.get()));
-    WriteUnitOfWork uow(opCtx.get());
+    auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+    StorageWriteTransaction txn(ru);
     RecordId reservedLoc(record_id_helpers::reservedIdFor(
         record_id_helpers::ReservationId::kWildcardMultikeyMetadataId, KeyFormat::String));
     invariant(record_id_helpers::isReserved(reservedLoc));
     ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(),
                                         makeKeyString(sorted.get(), key1, reservedLoc),
                                         /*dupsAllowed*/ true));
-    uow.commit();
+    txn.commit();
     ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
 }
 
@@ -434,14 +431,14 @@ TEST(SortedDataInterface, BuilderAddKeyWithReservedRecordIdStr) {
             record_id_helpers::ReservationId::kWildcardMultikeyMetadataId, KeyFormat::String));
         ASSERT(record_id_helpers::isReserved(reservedLoc));
 
-        WriteUnitOfWork wuow(opCtx.get());
-        ASSERT_SDI_INSERT_OK(builder->addKey(makeKeyString(sorted.get(), key1, reservedLoc)));
-        wuow.commit();
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
+        ASSERT_FALSE(builder->addKey(makeKeyString(sorted.get(), key1, reservedLoc)));
+        txn.commit();
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_S);
         ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
     }
 }

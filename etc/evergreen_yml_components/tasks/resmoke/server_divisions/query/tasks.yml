@@ -203,6 +203,7 @@ tasks:
         "default",
         "aggregation",
         "no_async",
+        "requires_large_host",
       ]
     depends_on:
       - name: aggregation
@@ -275,8 +276,8 @@ tasks:
           # This task used a fixed git revision for the jstestfuzz repo. As changes are made
           # to the mongo repo over time, the fixed jstestfuzz git rev used here will need to
           # be updated every so often (once every few months).
-          num_files: 24
-          num_tasks: 2
+          num_files: 11
+          num_tasks: 4
           npm_command: agg-fuzzer
           suite: aggregation_multiversion_fuzzer
           resmoke_args: "--mongodSetParameters='{logComponentVerbosity: {command: 2}}'"
@@ -308,6 +309,7 @@ tasks:
         "incompatible_mac",
         "aggregation",
         "read_write_concern",
+        "requires_large_host",
       ]
     depends_on:
       - name: aggregation
@@ -341,6 +343,7 @@ tasks:
         "aggregation",
         "secondary_reads",
         "sharded",
+        "requires_large_host",
       ]
     depends_on:
       - name: aggregation
@@ -358,6 +361,7 @@ tasks:
         "aggregation",
         "common",
         "sharded",
+        "requires_large_host",
       ]
     depends_on:
       - name: aggregation
@@ -429,8 +433,8 @@ tasks:
           # This task used a fixed git revision for the jstestfuzz repo. As changes are made
           # to the mongo repo over time, the fixed jstestfuzz git rev used here will need to
           # be updated every so often (once every few months).
-          num_files: 60
-          num_tasks: 2
+          num_files: 28
+          num_tasks: 4
           npm_command: agg-fuzzer
           suite: generational_fuzzer
           resmoke_args: "--mongodSetParameters='{logComponentVerbosity: {command: 2}}'"
@@ -929,6 +933,7 @@ tasks:
       [
         "assigned_to_jira_team_server_query_execution",
         "development_critical",
+        "requires_large_host",
         "requires_large_host_commit_queue",
         "jscore",
         "common",
@@ -1056,6 +1061,7 @@ tasks:
         "incompatible_windows",
         "incompatible_ppc",
         "incompatible_s390x",
+        "requires_large_host",
       ]
     commands:
       - func: "do setup"
@@ -1074,6 +1080,7 @@ tasks:
         "incompatible_windows",
         "incompatible_ppc",
         "incompatible_s390x",
+        "requires_large_host",
       ]
     commands:
       - func: "do setup"
@@ -1230,8 +1237,8 @@ tasks:
           # This task used a fixed git revision for the jstestfuzz repo. As changes are made
           # to the mongo repo over time, the fixed jstestfuzz git rev used here will need to
           # be updated every so often (once every few months).
-          num_files: 16
-          num_tasks: 2
+          num_files: 7
+          num_tasks: 4
           npm_command: update-fuzzer
           suite: update_fuzzer_replication
           resmoke_args: "--mongodSetParameters='{logComponentVerbosity: {command: 2}}'"
@@ -1358,8 +1365,8 @@ tasks:
       - func: "generate resmoke tasks"
         vars:
           <<: *jstestfuzz_config_vars
-          num_files: 14
-          num_tasks: 2
+          num_files: 6
+          num_tasks: 4
           npm_command: agg-fuzzer
           suite: generational_fuzzer
           resmoke_args: "--mongodSetParameters='{logComponentVerbosity: {command: 2}}'"

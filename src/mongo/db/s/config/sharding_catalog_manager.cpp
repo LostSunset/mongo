@@ -61,6 +61,7 @@
 #include "mongo/db/exec/document_value/document.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/generic_argument_util.h"
+#include "mongo/db/json.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/aggregate_command_gen.h"
@@ -1691,25 +1692,6 @@ void ShardingCatalogManager::cleanUpPlacementHistory(OperationContext* opCtx,
         Shard::RetryPolicy::kIdempotent));
 
     LOGV2_DEBUG(7068808, 2, "Cleaning up placement history - done deleting entries");
-}
-
-int ShardingCatalogManager::deleteMaxSizeMbFromShardEntries(OperationContext* opCtx) {
-    auto unsetMaxSizeMbReq = BSON("$unset" << BSON("maxSize"
-                                                   << ""));
-    DBDirectClient client(opCtx);
-    write_ops::UpdateCommandRequest updateOp(NamespaceString::kConfigsvrShardsNamespace);
-    updateOp.setUpdates({[&] {
-        write_ops::UpdateOpEntry entry;
-        entry.setU(unsetMaxSizeMbReq);
-        entry.setQ({});
-        entry.setMulti(true);
-        entry.setUpsert(false);
-        return entry;
-    }()});
-    updateOp.getWriteCommandRequestBase().setOrdered(false);
-    auto updateReply = client.update(updateOp);
-    write_ops::checkWriteErrors(updateReply);
-    return updateReply.getN();
 }
 
 Status ShardingCatalogManager::upgradeDowngradeConfigSettings(OperationContext* opCtx) {

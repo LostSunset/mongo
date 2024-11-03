@@ -96,8 +96,6 @@
 #include "mongo/db/repl/repl_set_config.h"
 #include "mongo/db/repl/repl_settings.h"
 #include "mongo/db/repl/replication_coordinator.h"
-#include "mongo/db/repl/tenant_migration_donor_service.h"
-#include "mongo/db/repl/tenant_migration_recipient_service.h"
 #include "mongo/db/s/config/configsvr_coordinator_service.h"
 #include "mongo/db/s/config/sharding_catalog_manager.h"
 #include "mongo/db/s/migration_blocking_operation/multi_update_coordinator.h"
@@ -215,24 +213,6 @@ void abortAllReshardCollection(OperationContext* opCtx) {
             "[{}]. This is sign that the resharding operation was interrupted but not "
             "aborted."_format(nsListStr));
     }
-}
-
-// TODO SERVER-78330 remove this.
-void deleteShardingStateRecoveryDoc(OperationContext* opCtx) {
-    DBDirectClient client(opCtx);
-    const auto commandResponse = client.runCommand([&] {
-        write_ops::DeleteCommandRequest deleteOp(NamespaceString::kServerConfigurationNamespace);
-        deleteOp.setDeletes(
-            {[&] {
-                write_ops::DeleteOpEntry entry;
-                entry.setQ(BSON("_id"
-                                << "minOpTimeRecovery"));
-                entry.setMulti(false);
-                return entry;
-            }()});
-        return deleteOp.serialize();
-    }());
-    uassertStatusOK(getStatusFromWriteCommandReply(commandResponse->getCommandReply()));
 }
 
 void _setShardedClusterCardinalityParameter(
@@ -725,13 +705,6 @@ private:
                                   const multiversion::FeatureCompatibilityVersion requestedVersion,
                                   boost::optional<Timestamp> changeTimestamp) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
-        if (!role || role->has(ClusterRole::None)) {
-            if (repl::ReplicationCoordinator::get(opCtx)->getSettings().isServerless()) {
-                _cancelServerlessMigrations(opCtx);
-            }
-            return;
-        }
-
         // Note the config server is also considered a shard, so the ConfigServer and ShardServer
         // roles aren't mutually exclusive.
         if (role && role->has(ClusterRole::ConfigServer)) {
@@ -789,11 +762,6 @@ private:
     void _upgradeServerMetadata(OperationContext* opCtx,
                                 const multiversion::FeatureCompatibilityVersion requestedVersion) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
-        if (role && role->has(ClusterRole::ShardServer)) {
-            // Delete any possible leftover ShardingStateRecovery document.
-            // TODO SERVER-78330 remove this.
-            deleteShardingStateRecoveryDoc(opCtx);
-        }
 
         if (role && role->has(ClusterRole::ConfigServer)) {
             _setShardedClusterCardinalityParameter(opCtx, requestedVersion);
@@ -1027,12 +995,6 @@ private:
     // S mode.
     void _prepareToDowngradeActions(OperationContext* opCtx) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
-        if ((!role || role->has(ClusterRole::None)) &&
-            repl::ReplicationCoordinator::get(opCtx)->getSettings().isServerless()) {
-            _cancelServerlessMigrations(opCtx);
-            return;
-        }
-
         // Note the config server is also considered a shard, so the ConfigServer and ShardServer
         // roles aren't mutually exclusive.
         if (role && role->has(ClusterRole::ConfigServer)) {
@@ -1564,28 +1526,6 @@ private:
     }
 
     /**
-     * Abort all serverless migrations active on this node, for both donors and recipients.
-     * Called after reaching an upgrading or downgrading state for nodes with ClusterRole::None.
-     * Must only be called in serverless mode.
-     */
-    void _cancelServerlessMigrations(OperationContext* opCtx) {
-        invariant(repl::ReplicationCoordinator::get(opCtx)->getSettings().isServerless());
-        invariant(serverGlobalParams.featureCompatibility.acquireFCVSnapshot()
-                      .isUpgradingOrDowngrading());
-
-        auto donorService = checked_cast<TenantMigrationDonorService*>(
-            repl::PrimaryOnlyServiceRegistry::get(opCtx->getServiceContext())
-                ->lookupServiceByName(TenantMigrationDonorService::kServiceName));
-        donorService->abortAllMigrations(opCtx);
-
-        auto recipientService = checked_cast<repl::TenantMigrationRecipientService*>(
-            repl::PrimaryOnlyServiceRegistry::get(opCtx->getServiceContext())
-                ->lookupServiceByName(
-                    repl::TenantMigrationRecipientService::kTenantMigrationRecipientServiceName));
-        recipientService->abortAllMigrations(opCtx);
-    }
-
-    /**
      * For sharded cluster servers:
      *  Generate a new changeTimestamp if change fcv is called on config server,
      *  otherwise retrieve changeTimestamp from the Config Server request.
@@ -1677,11 +1617,6 @@ private:
                 requestedVersion)) {
             ShardingDDLCoordinatorService::getService(opCtx)
                 ->waitForCoordinatorsOfGivenTypeToComplete(opCtx, DDLCoordinatorTypeEnum::kCollMod);
-        }
-
-        // TODO SERVER-80266 remove once 8.0 becomes last lts
-        if (role && role->has(ClusterRole::ConfigServer)) {
-            ShardingCatalogManager::get(opCtx)->deleteMaxSizeMbFromShardEntries(opCtx);
         }
     }
 };

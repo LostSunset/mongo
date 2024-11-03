@@ -300,6 +300,30 @@ SASL_WINDOWS_COPTS = select({
     "//conditions:default": [],
 })
 
+SASL_WINDOWS_LINKFLAGS = select({
+    "@platforms//os:windows": ["/LIBPATH:external/windows_sasl/lib"],
+    "//conditions:default": [],
+})
+
+GLOBAL_WINDOWS_LIBRAY_LINKFLAGS = select({
+    "@platforms//os:windows": [
+        "bcrypt.lib",
+        "Dnsapi.lib",
+        "Crypt32.lib",
+        "Version.lib",
+        "Winmm.lib",
+        "Iphlpapi.lib",
+        "Pdh.lib",
+        "kernel32.lib",
+        "shell32.lib",
+        "ws2_32.lib",
+        "DbgHelp.lib",
+        "Psapi.lib",
+        "Secur32.lib",
+    ],
+    "//conditions:default": [],
+})
+
 WINDOWS_LINKFLAGS = (
     WINDOWS_DEFAULT_LINKFLAGS +
     WINDOWS_PDB_PAGE_SIZE_LINKOPT +
@@ -1186,6 +1210,14 @@ COVERAGE_FLAGS = select({
     "//conditions:default": [],
 })
 
+MACOS_SSL_LINKFLAGS = select({
+    "//bazel/config:ssl_enabled_macos": [
+        "-framework CoreFoundation",
+        "-framework Security",
+    ],
+    "//conditions:default": [],
+})
+
 MONGO_GLOBAL_INCLUDE_DIRECTORIES = [
     "-Isrc",
     "-I$(GENDIR)/src",
@@ -1279,7 +1311,10 @@ MONGO_GLOBAL_LINKFLAGS = (
     DISABLE_SOURCE_WARNING_AS_ERRORS_LINKFLAGS +
     THIN_LTO_FLAGS +
     SYMBOL_ORDER_LINKFLAGS +
-    COVERAGE_FLAGS
+    COVERAGE_FLAGS +
+    GLOBAL_WINDOWS_LIBRAY_LINKFLAGS +
+    SASL_WINDOWS_LINKFLAGS +
+    MACOS_SSL_LINKFLAGS
 )
 
 MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS = SYMBOL_ORDER_FILES
@@ -1294,7 +1329,7 @@ def force_includes_copt(package_name, name):
     if package_name.startswith("src/mongo"):
         basic_h = "mongo/platform/basic.h"
         return select({
-            "@platforms//os:windows": ["/FI", basic_h],
+            "@platforms//os:windows": ["/FI" + basic_h],
             "//conditions:default": ["-include", basic_h],
         })
 
@@ -1306,7 +1341,7 @@ def force_includes_copt(package_name, name):
             "//bazel/config:linux_x86_64": ["-include", "third_party/mozjs/platform/x86_64/linux/build/js-config.h"],
             "//bazel/config:macos_aarch64": ["-include", "third_party/mozjs/platform/aarch64/macOS/build/js-config.h"],
             "//bazel/config:macos_x86_64": ["-include", "third_party/mozjs/platform/x86_64/macOS/build/js-config.h"],
-            "//bazel/config:windows_x86_64": ["/FI", "third_party/mozjs/platform/x86_64/windows/build/js-config.h"],
+            "//bazel/config:windows_x86_64": ["/FI" + "third_party/mozjs/platform/x86_64/windows/build/js-config.h"],
         })
 
     return []
@@ -1370,7 +1405,8 @@ def mongo_cc_library(
         defines = [],
         additional_linker_inputs = [],
         features = [],
-        exec_properties = {}):
+        exec_properties = {},
+        **kwargs):
     """Wrapper around cc_library.
 
     Args:
@@ -1437,12 +1473,23 @@ def mongo_cc_library(
     else:
         enterprise_compatible = []
 
-    if "compile_requires_large_memory" in tags:
+    if "compile_requires_large_memory_gcc" in tags:
         exec_properties |= select({
             "//bazel/config:gcc_x86_64": {
                 "Pool": "large_mem_x86_64",
             },
             "//bazel/config:gcc_aarch64": {
+                "Pool": "large_memory_arm64",
+            },
+            "//conditions:default": {},
+        })
+
+    if "compile_requires_large_memory_fsan" in tags:
+        exec_properties |= select({
+            "//bazel/config:fsan_enabled_x86_64": {
+                "Pool": "large_mem_x86_64",
+            },
+            "//bazel/config:fsan_enabled_aarch64": {
                 "Pool": "large_memory_arm64",
             },
             "//conditions:default": {},
@@ -1528,6 +1575,7 @@ def mongo_cc_library(
         }) + target_compatible_with + enterprise_compatible,
         additional_linker_inputs = additional_linker_inputs + MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS,
         exec_properties = exec_properties,
+        **kwargs
     )
     cc_library(
         name = name + WITH_DEBUG_SUFFIX,
@@ -1553,6 +1601,7 @@ def mongo_cc_library(
         target_compatible_with = target_compatible_with + enterprise_compatible,
         additional_linker_inputs = additional_linker_inputs + MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS,
         exec_properties = exec_properties,
+        **kwargs
     )
 
     # Creates a shared library version of our target only if
@@ -1616,7 +1665,8 @@ def _mongo_cc_binary_and_program(
         additional_linker_inputs = [],
         features = [],
         exec_properties = {},
-        _program_type = ""):
+        _program_type = "",
+        **kwargs):
     if linkstatic == True:
         fail("""Linking specific targets statically is not supported.
         The mongo build must link entirely statically or entirely dynamically.
@@ -1688,7 +1738,7 @@ def _mongo_cc_binary_and_program(
         "target_compatible_with": target_compatible_with + enterprise_compatible,
         "additional_linker_inputs": additional_linker_inputs + MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS,
         "exec_properties": exec_properties,
-    }
+    } | kwargs
 
     if _program_type == "binary":
         cc_binary(**args)
@@ -2037,9 +2087,13 @@ def mongo_cc_proto_library(
         deps,
         **kwargs):
     native.cc_proto_library(
-        name = name,
+        name = name + "_raw",
         deps = deps,
         **kwargs
+    )
+    strip_deps(
+        name = name,
+        input = name + "_raw",
     )
 
 def mongo_cc_grpc_library(

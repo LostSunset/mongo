@@ -39,7 +39,7 @@ class WiredTigerOplogTruncateMarkers;
 // Container for holding oplog-specific metadata.
 class WiredTigerOplogData {
 public:
-    WiredTigerOplogData(const WiredTigerRecordStore::Params& params);
+    WiredTigerOplogData(const WiredTigerRecordStore::Oplog::Params& params);
 
     // Adds the truncation statistics for this oplog to the |builder| (for
     // populating the ServerStatus).
@@ -52,7 +52,7 @@ public:
 
     AtomicWord<Timestamp>& getFirstRecordTimestamp();
 
-    Status updateSize(OperationContext* opCtx, int64_t newSize);
+    Status updateSize(int64_t newSize);
 
     // Update this oplog's stats tracker with a new truncation event that
     // took |micros|-microseconds to complete.

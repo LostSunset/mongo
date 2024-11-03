@@ -55,6 +55,7 @@
 #include "mongo/db/query/query_shape/serialization_options.h"
 #include "mongo/db/record_id.h"
 #include "mongo/dbtests/dbtests.h"  // IWYU pragma: keep
+#include "mongo/idl/server_parameter_test_util.h"
 #include "mongo/logv2/log.h"
 #include "mongo/logv2/log_attr.h"
 #include "mongo/logv2/log_component.h"
@@ -3053,10 +3054,14 @@ TEST(GetComputedPathsTest, ExpressionObjectCorrectlyReportsComputedPathsNested) 
     auto expr = Expression::parseObject(&expCtx, specObject, expCtx.variablesParseState);
     ASSERT(dynamic_cast<ExpressionObject*>(expr.get()));
     auto computedPaths = expr->getComputedPaths("h");
-    ASSERT(computedPaths.paths.empty());
-    ASSERT_EQ(computedPaths.renames.size(), 2u);
+    // Note that the $map does not contribute to any renames because it can change the shape of a
+    // document when the document contains arrays of arrays. Thus the only rename in the output here
+    // is the one specified by 'a: {b: '$c'}', and the path computed by the $map is added to the
+    // 'paths' list.
+    ASSERT_EQ(computedPaths.paths.size(), 1u);
+    ASSERT_EQ(computedPaths.paths.count("h.d"), 1u);
+    ASSERT_EQ(computedPaths.renames.size(), 1u);
     ASSERT_EQ(computedPaths.renames["h.a.b"], "c");
-    ASSERT_EQ(computedPaths.renames["h.d.f"], "e.g");
 }
 
 TEST(GetComputedPathsTest, ExpressionMapCorrectlyReportsComputedPaths) {
@@ -3066,10 +3071,11 @@ TEST(GetComputedPathsTest, ExpressionMapCorrectlyReportsComputedPaths) {
     auto expr = Expression::parseObject(&expCtx, specObject, expCtx.variablesParseState);
     ASSERT(dynamic_cast<ExpressionMap*>(expr.get()));
     auto computedPaths = expr->getComputedPaths("e");
+    // Note that the $map does not result in any renames because it can change the shape of a
+    // document when the document contains arrays of arrays.
     ASSERT_EQ(computedPaths.paths.size(), 1u);
-    ASSERT_EQ(computedPaths.paths.count("e.d"), 1u);
-    ASSERT_EQ(computedPaths.renames.size(), 1u);
-    ASSERT_EQ(computedPaths.renames["e.b"], "a.c");
+    ASSERT_EQ(computedPaths.paths.count("e"), 1u);
+    ASSERT(computedPaths.renames.empty());
 }
 
 TEST(GetComputedPathsTest, ExpressionMapCorrectlyReportsComputedPathsWithDefaultVarName) {
@@ -3078,10 +3084,11 @@ TEST(GetComputedPathsTest, ExpressionMapCorrectlyReportsComputedPathsWithDefault
     auto expr = Expression::parseObject(&expCtx, specObject, expCtx.variablesParseState);
     ASSERT(dynamic_cast<ExpressionMap*>(expr.get()));
     auto computedPaths = expr->getComputedPaths("e");
+    // Note that the $map does not result in any renames because it can change the shape of a
+    // document when the document contains arrays of arrays.
     ASSERT_EQ(computedPaths.paths.size(), 1u);
-    ASSERT_EQ(computedPaths.paths.count("e.d"), 1u);
-    ASSERT_EQ(computedPaths.renames.size(), 1u);
-    ASSERT_EQ(computedPaths.renames["e.b"], "a.c");
+    ASSERT_EQ(computedPaths.paths.count("e"), 1u);
+    ASSERT(computedPaths.renames.empty());
 }
 
 TEST(GetComputedPathsTest, ExpressionMapCorrectlyReportsComputedPathsWithNestedExprObject) {
@@ -3090,9 +3097,11 @@ TEST(GetComputedPathsTest, ExpressionMapCorrectlyReportsComputedPathsWithNestedE
     auto expr = Expression::parseObject(&expCtx, specObject, expCtx.variablesParseState);
     ASSERT(dynamic_cast<ExpressionMap*>(expr.get()));
     auto computedPaths = expr->getComputedPaths("e");
-    ASSERT(computedPaths.paths.empty());
-    ASSERT_EQ(computedPaths.renames.size(), 1u);
-    ASSERT_EQ(computedPaths.renames["e.b.c"], "a.d");
+    // Note that the $map does not result in any renames because it can change the shape of a
+    // document when the document contains arrays of array.
+    ASSERT_EQ(computedPaths.paths.size(), 1u);
+    ASSERT_EQ(computedPaths.paths.count("e"), 1u);
+    ASSERT(computedPaths.renames.empty());
 }
 
 TEST(GetComputedPathsTest, ExpressionMapNotConsideredRenameWithWrongRootVariable) {
@@ -5271,6 +5280,83 @@ TEST(ExpressionModTest, ModWithDoubleIntTypeButIntegralValues) {
                           {{{Value(3), Value(2.0)}, Value(1.0)},
                            {{Value(3.0), Value(2.0)}, Value(1.0)},
                            {{Value(3.0), Value(2)}, Value(1.0)}});
+}
+
+/**
+ * This helper allows the manual registration of the $sigmoid expression to add it to the parserMap
+ * without guarding it behind a feature flag (note the boost::none argument below). This is required
+ * for some unit tests. Normally, expressions are added at server startup time via macros and the
+ * manual registration is not necessary. However, $sigmoid is gated beind a feature flag and does
+ * not get put into the map as the flag is off by default. Changing the value of the feature flag
+ * with RAIIServerParameterControllerForTest() does not solve the issue because the registration
+ * logic is not re-hit.
+ *
+ * TODO SERVER-94570: delete this manual registration of the $sigmoid expression and any callers
+ * once the feature flag is enabled. Should also be able to delete the ExpressionSigmoidTest class.
+ *
+ * TODO SERVER-93426: delete this manual registration of the $sigmoid expression and any callers.
+ * Should be able to use RAIIServerParameterControllerForTest as a private member of
+ * ExpressionSigmoidTest to enable the feature flag. Even if we unconditionally register the
+ * expression, we currently cannot use RAIIServerParameterControllerForTest here because that
+ * enables a different instance of the feature flag than the one that is found inside the parse map
+ * (and the parse map instance is checked during parsing to see if the feature is allowed).
+ */
+void registerSigmoidExpression() {
+    try {
+        Expression::registerExpression("$sigmoid",
+                                       ExpressionSigmoid::parseExpressionSigmoid,
+                                       AllowedWithApiStrict::kNeverInVersion1,
+                                       AllowedWithClientType::kAny,
+                                       boost::none);
+    } catch (...) {
+        // registerSigmoidExpression() will throw if a duplicate registration is attempted. We catch
+        // and ignore this here. This is so that we can add registerSigmoidExpression() to each test
+        // that could require it, so that we don't rely on the ordering of the tests to ensure the
+        // expression is registered.
+    }
+}
+
+class ExpressionSigmoidTest : public unittest::Test {
+public:
+    void setUp() override {
+        registerSigmoidExpression();
+    }
+};
+
+TEST_F(ExpressionSigmoidTest, RoundTripSerialization) {
+    auto expCtx = ExpressionContextForTest{};
+
+    auto spec = BSON("$sigmoid" << 100);
+    auto sigmoidExp = Expression::parseExpression(&expCtx, spec, expCtx.variablesParseState);
+
+    auto opts = SerializationOptions{LiteralSerializationPolicy::kToRepresentativeParseableValue};
+    auto serialized = sigmoidExp->serialize(opts);
+    // The query shape for $sigmoid is recorded in its desugared form as there's no
+    // ExpressionSigmoid after parsing.
+    ASSERT_VALUE_EQ(
+        Value(fromjson(R"({$divide: [1, {$add: [1, {$exp: [{$multiply: [1, 1]}]}]}]})")),
+        serialized);
+
+    auto roundTrip = Expression::parseExpression(
+                         &expCtx, serialized.getDocument().toBson(), expCtx.variablesParseState)
+                         ->serialize(opts);
+    ASSERT_VALUE_EQ(roundTrip, serialized);
+}
+
+TEST_F(ExpressionSigmoidTest, CorrectRedaction) {
+    auto expCtx = ExpressionContextForTest{};
+
+    auto spec = BSON("$sigmoid" << 100);
+    auto sigmoidExp = Expression::parseExpression(&expCtx, spec, expCtx.variablesParseState);
+
+    auto opts = SerializationOptions{LiteralSerializationPolicy::kToDebugTypeString};
+    auto serialized = sigmoidExp->serialize(opts);
+    // The query shape for $sigmoid is recorded in its desugared form as there's no
+    // ExpressionSigmoid after parsing.
+    ASSERT_VALUE_EQ(
+        Value(fromjson(
+            R"({$divide: ["?number", {$add: ["?number", {$exp: [{$multiply: "?array<?number>"}]}]}]})")),
+        serialized);
 }
 
 }  // namespace ExpressionTests

@@ -33,7 +33,6 @@
 #include <cstdint>
 #include <memory>
 #include <set>
-#include <string>
 #include <vector>
 
 #include <boost/optional/optional.hpp>
@@ -41,7 +40,6 @@
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
 #include "mongo/base/status_with.h"
-#include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/bson/timestamp.h"
 #include "mongo/db/catalog/virtual_collection_options.h"
@@ -56,9 +54,7 @@
 namespace mongo {
 class ExternalRecordStore : public RecordStore {
 public:
-    ExternalRecordStore(const NamespaceString& ns,
-                        boost::optional<UUID> uuid,
-                        const VirtualCollectionOptions& vopts);
+    ExternalRecordStore(boost::optional<UUID> uuid, const VirtualCollectionOptions& vopts);
 
     const VirtualCollectionOptions& getOptions() const {
         return _vopts;
@@ -68,28 +64,52 @@ public:
         return "external";
     }
 
-    bool isTemp() const {
+    boost::optional<UUID> uuid() const final {
+        return boost::none;
+    }
+
+    bool isTemp() const final {
         return true;
     }
 
-    NamespaceString ns(OperationContext* opCtx) const final {
-        return _ns;
+    std::shared_ptr<Ident> getSharedIdent() const final {
+        unimplementedTasserted();
+        return nullptr;
+    }
+
+    const std::string& getIdent() const final {
+        unimplementedTasserted();
+        static std::string ident;
+        return ident;
+    }
+
+    void setIdent(std::shared_ptr<Ident>) final {
+        unimplementedTasserted();
     }
 
     KeyFormat keyFormat() const final {
         return KeyFormat::Long;
     }
 
-    long long dataSize(OperationContext*) const final {
+    long long dataSize() const final {
         return 0LL;
     }
 
-    long long numRecords(OperationContext*) const final {
+    long long numRecords() const final {
         return 0LL;
     }
 
-    int64_t storageSize(OperationContext*, BSONObjBuilder*, int) const final {
+    int64_t storageSize(RecoveryUnit&, BSONObjBuilder*, int) const final {
         return 0LL;
+    }
+
+    int64_t freeStorageSize(RecoveryUnit&) const final {
+        return 0ULL;
+    }
+
+    RecordData dataFor(OperationContext*, const RecordId&) const final {
+        unimplementedTasserted();
+        return {};
     }
 
     bool findRecord(OperationContext*, const RecordId&, RecordData*) const final {
@@ -97,8 +117,47 @@ public:
         return false;
     }
 
+    void deleteRecord(OperationContext* opCtx, const RecordId& dl) final {
+        unimplementedTasserted();
+    }
+
+    Status insertRecords(OperationContext*,
+                         std::vector<Record>*,
+                         const std::vector<Timestamp>&) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+
+    StatusWith<RecordId> insertRecord(OperationContext*,
+                                      const char* data,
+                                      int len,
+                                      Timestamp) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+
+    StatusWith<RecordId> insertRecord(
+        OperationContext*, const RecordId&, const char* data, int len, Timestamp) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+
+    Status updateRecord(OperationContext*, const RecordId&, const char* data, int len) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
+    }
+
     bool updateWithDamagesSupported() const final {
         return false;
+    }
+
+    StatusWith<RecordData> updateWithDamages(OperationContext* opCtx,
+                                             const RecordId& loc,
+                                             const RecordData& oldRec,
+                                             const char* damageSource,
+                                             const DamageVector& damages) final {
+        unimplementedTasserted();
+        return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
 
     void printRecordMetadata(OperationContext*,
@@ -115,70 +174,56 @@ public:
         return nullptr;
     }
 
-    void appendNumericCustomStats(OperationContext*, BSONObjBuilder*, double) const final {}
-
-    void updateStatsAfterRepair(OperationContext* opCtx,
-                                long long numRecords,
-                                long long dataSize) final {
-        unimplementedTasserted();
-    }
-
-protected:
-    void doDeleteRecord(OperationContext*, const RecordId&) final {
-        unimplementedTasserted();
-    }
-
-    Status doInsertRecords(OperationContext*,
-                           std::vector<Record>*,
-                           const std::vector<Timestamp>&) final {
+    Status truncate(OperationContext*) final {
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
 
-    Status doUpdateRecord(OperationContext*, const RecordId&, const char*, int) final {
+    Status rangeTruncate(OperationContext*,
+                         const RecordId& minRecordId = RecordId(),
+                         const RecordId& maxRecordId = RecordId(),
+                         int64_t hintDataSizeIncrement = 0,
+                         int64_t hintNumRecordsIncrement = 0) final {
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
 
-    StatusWith<RecordData> doUpdateWithDamages(OperationContext*,
-                                               const RecordId&,
-                                               const RecordData&,
-                                               const char*,
-                                               const DamageVector&) final {
+    bool compactSupported() const final {
+        return false;
+    }
+
+    StatusWith<int64_t> compact(OperationContext*, const CompactOptions&) final {
         unimplementedTasserted();
         return {ErrorCodes::Error::UnknownError, "Unknown error"};
     }
 
-    Status doTruncate(OperationContext* opCtx) final {
-        unimplementedTasserted();
-        return {ErrorCodes::Error::UnknownError, "Unknown error"};
-    }
-
-    Status doRangeTruncate(OperationContext* opCtx,
-                           const RecordId& minRecordId,
-                           const RecordId& maxRecordId,
-                           int64_t hintDataSizeIncrement,
-                           int64_t hintNumRecordsIncrement) final {
-        unimplementedTasserted();
-        return {ErrorCodes::Error::UnknownError, "Unknown error"};
-    }
-
-    void doCappedTruncateAfter(OperationContext*,
-                               const RecordId&,
-                               bool,
-                               const AboutToDeleteRecordCallback&) final {
+    void validate(RecoveryUnit&, bool full, ValidateResults*) final {
         unimplementedTasserted();
     }
 
-    RecordId getLargestKey(OperationContext* opCtx) const final {
+    void appendNumericCustomStats(RecoveryUnit&, BSONObjBuilder*, double) const final {}
+
+    void appendAllCustomStats(RecoveryUnit&, BSONObjBuilder*, double scale) const final {}
+
+    RecordId getLargestKey(OperationContext*) const final {
         unimplementedTasserted();
-        return RecordId();
+        return {};
     }
 
-    void reserveRecordIds(OperationContext* opCtx,
-                          std::vector<RecordId>* out,
-                          size_t nRecords) final {
+    void reserveRecordIds(OperationContext*, std::vector<RecordId>*, size_t numRecords) final {
         unimplementedTasserted();
+    }
+
+    void updateStatsAfterRepair(long long numRecords, long long dataSize) final {
+        unimplementedTasserted();
+    }
+
+    RecordStore::Capped* capped() final {
+        return nullptr;
+    }
+
+    RecordStore::Oplog* oplog() final {
+        return nullptr;
     }
 
 private:
@@ -187,6 +232,5 @@ private:
     }
 
     VirtualCollectionOptions _vopts;
-    NamespaceString _ns;
 };
 }  // namespace mongo

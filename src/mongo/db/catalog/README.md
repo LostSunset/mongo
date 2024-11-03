@@ -1666,23 +1666,6 @@ As of v7.0, the size of each ticket pool is managed dynamically by the server to
 
 Each pool of tickets is maintained in a [TicketHolder](https://github.com/mongodb/mongo/blob/r6.3.0-rc0/src/mongo/util/concurrency/ticketholder.h#L52). Tickets distributed from a given TicketHolder will always be returned to the same TicketHolder (a write ticket will always be returned to the TicketHolder with the write ticket pool).
 
-### Deprioritization
-
-When resources are limited, its important to prioritize which operations are admitted to run first. The [PriorityTicketHolder](https://github.com/mongodb/mongo/blob/r6.3.0-rc0/src/mongo/util/concurrency/priority_ticketholder.h) enables deprioritization of low priority operations and is used by default on [linux machines](https://jira.mongodb.org/browse/SERVER-72616).
-
-If the server is not under load (there are tickets available for the global lock request mode), then tickets are handed out immediately, regardless of admission priority. Otherwise, operations wait until a ticket is available.
-
-Operations waiting for a ticket are assigned to a TicketQueue according to their priority. There are two queues, one manages low priority operations, the other normal priority operations.
-When a ticket is released to the PriorityTicketHolder, the default behavior for the PriorityTicketHolder is as follows:
-
-1. Attempt a ticket transfer through the normal priority TicketQueue. If unsuccessful (e.g there are no normal priority operations waiting for a ticket), continue to (2)
-2. Attempt a ticket transfer through the the low priority TicketQueue
-3. If no transfer can be made, return the ticket to the general ticket pool
-
-#### Preventing Low Priority Operations from Falling too Far Behind
-
-If a server is consistently under load, and ticket transfers were always made through the normal priority TicketQueue first, then operations assigned to the low priority TicketQueue could starve. To remedy this, `lowPriorityAdmissionBypassThreshold` limits the number of consecutive ticket transfers to the normal priority TicketQueue before a ticket transfer is issued through the low priority TicketQueue.
-
 ## Flow Control
 
 The Flow Control mechanism aims to keep replica set majority committed lag less than or equal to a
@@ -1975,18 +1958,16 @@ At or shortly after startup, an initial set of CollectionTruncateMarkers are cre
 ### Collections that use CollectionTruncateMarkers
 
 - [The oplog](#oplog-truncation) - `OplogTruncateMarkers`
-- [Change stream change collections](#change-collection-truncation) - `ChangeCollectionTruncateMarkers`
 - [Change stream pre images collections](#pre-images-collection-truncation) - `PreImagesTruncateMarkersPerNsUUID`
 
 ### Change Stream Collection Truncation
 
-Change stream collections which use CollectionTruncateMarkers
+Change stream collection that uses CollectionTruncateMarkers
 
-- change collection: `<tenantId>_config.system.change_collection`, exclusive to serverless environments.
 - pre-images: `<tenantId>_config.system.preimages` in serverless, `config.system.preimages` in dedicated environments.
 
-Both change stream collections have a periodic remover thread ([ChangeStreamExpiredPreImagesRemover](https://github.com/10gen/mongo/blob/r7.1.0-rc3/src/mongo/db/pipeline/change_stream_expired_pre_image_remover.cpp#L71), [ChangeCollectionExpiredDocumentsRemover](https://github.com/10gen/mongo/blob/r7.1.0-rc3/src/mongo/db/change_collection_expired_documents_remover.cpp)).
-Each remover thread:
+The change stream pre-images collections has a periodic remover thread ([ChangeStreamExpiredPreImagesRemover](https://github.com/10gen/mongo/blob/r7.1.0-rc3/src/mongo/db/pipeline/change_stream_expired_pre_image_remover.cpp#L71).
+The remover thread:
 
 1. Creates the tenant's initial CollectionTruncateMarkers for the tenant if they do not yet exist
    - Lazy initialization of the initial truncate markers is imperative so writes aren't blocked on startup
@@ -1995,12 +1976,6 @@ Each remover thread:
 #### Cleanup After Unclean Shutdown
 
 After an unclean shutdown, all expired pre-images are truncated at startup. WiredTiger truncate cannot guarantee a consistent view of previously truncated data on unreplicated, untimestamped ranges after a crash. Unlike the oplog, the change stream collections aren't logged, don't persist any special timestamps, and it's possible that previously truncated documents can resurface after shutdown.
-
-#### Change Collection Truncation
-
-Change collections are per tenant - and there is one `ChangeCollectionTruncateMarkers` per tenant. The `ChangeStreamChangeCollectionManager` maps the UUID of a tenant's change collection to its corresponding 'ChangeCollectionTruncateMarkers'.
-
-Each tenant has a set 'expireAfterSeconds' parameter. An entry is expired if its 'wall time' is more than 'expireAfterSeconds' older than the node's current wall time. A truncate marker is expired if its last record is expired.
 
 #### Pre Images Collection Truncation
 
@@ -2022,8 +1997,6 @@ For each tenant, `ChangeStreamExpiredPreImagesRemover` iterates over each set of
   - The main api for CollectionTruncateMarkers.
 - [The OplogTruncateMarkers class](https://github.com/10gen/mongo/blob/r7.1.0-rc3/src/mongo/db/storage/wiredtiger/wiredtiger_record_store_oplog_truncate_markers.h)
   - Oplog specific truncate markers.
-- [The ChangeCollectionTruncateMarkers class](https://github.com/10gen/mongo/blob/r7.1.0-rc3/src/mongo/db/change_collection_truncate_markers.h#L47)
-  - Change stream change collection specific truncate markers.
 - [The PreImagesTruncateMarkersPerNsUUID class](https://github.com/10gen/mongo/blob/r7.1.0-rc3/src/mongo/db/change_stream_pre_images_truncate_markers_per_nsUUID.h#L62)
   - Truncate markers for a given nsUUID captured within a pre-images collection.
 - [The PreImagesTruncateManager class](https://github.com/10gen/mongo/blob/r7.1.0-rc3/src/mongo/db/change_stream_pre_images_truncate_manager.h#L70)

@@ -36,7 +36,6 @@
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/record_id.h"
 #include "mongo/db/service_context.h"
-#include "mongo/db/storage/sorted_data_interface.h"
 #include "mongo/db/storage/sorted_data_interface_test_assert.h"
 #include "mongo/db/storage/sorted_data_interface_test_harness.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
@@ -56,39 +55,40 @@ TEST(WiredTigerStandardIndexText, CursorInActiveTxnAfterNext) {
     // Populate data.
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
 
-        WriteUnitOfWork uow(opCtx.get());
+        StorageWriteTransaction txn(ru);
         auto ks = makeKeyString(sdi.get(), BSON("" << 1), RecordId(1));
         ASSERT_SDI_INSERT_OK(sdi->insert(opCtx.get(), ks, true));
 
         ks = makeKeyString(sdi.get(), BSON("" << 2), RecordId(2));
         ASSERT_SDI_INSERT_OK(sdi->insert(opCtx.get(), ks, true));
 
-        uow.commit();
+        txn.commit();
     }
 
     // Cursors should always ensure they are in an active transaction when next() is called.
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
 
-        auto ru = WiredTigerRecoveryUnit::get(shard_role_details::getRecoveryUnit(opCtx.get()));
+        auto& ru = *WiredTigerRecoveryUnit::get(shard_role_details::getRecoveryUnit(opCtx.get()));
 
         auto cursor = sdi->newCursor(opCtx.get());
         auto res = cursor->seek(
             makeKeyStringForSeek(sdi.get(), BSONObj(), true, true).finishAndGetBuffer());
         ASSERT(res);
 
-        ASSERT_TRUE(ru->isActive());
+        ASSERT_TRUE(ru.isActive());
 
-        // Committing a WriteUnitOfWork will end the current transaction.
-        WriteUnitOfWork wuow(opCtx.get());
-        ASSERT_TRUE(ru->isActive());
-        wuow.commit();
-        ASSERT_FALSE(ru->isActive());
+        // Committing a transaction will end the current transaction.
+        StorageWriteTransaction txn(ru);
+        ASSERT_TRUE(ru.isActive());
+        txn.commit();
+        ASSERT_FALSE(ru.isActive());
 
         // If a cursor is used after a WUOW commits, it should implicitly start a new transaction.
         ASSERT(cursor->next());
-        ASSERT_TRUE(ru->isActive());
+        ASSERT_TRUE(ru.isActive());
     }
 }
 
@@ -101,22 +101,22 @@ TEST(WiredTigerStandardIndexText, CursorInActiveTxnAfterSeek) {
     // Populate data.
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
 
-        WriteUnitOfWork uow(opCtx.get());
+        StorageWriteTransaction txn(ru);
         auto ks = makeKeyString(sdi.get(), BSON("" << 1), RecordId(1));
         ASSERT_SDI_INSERT_OK(sdi->insert(opCtx.get(), ks, true));
 
         ks = makeKeyString(sdi.get(), BSON("" << 2), RecordId(2));
         ASSERT_SDI_INSERT_OK(sdi->insert(opCtx.get(), ks, true));
 
-        uow.commit();
+        txn.commit();
     }
 
     // Cursors should always ensure they are in an active transaction when seek() is called.
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-
-        auto ru = WiredTigerRecoveryUnit::get(shard_role_details::getRecoveryUnit(opCtx.get()));
+        auto& ru = *WiredTigerRecoveryUnit::get(shard_role_details::getRecoveryUnit(opCtx.get()));
 
         auto cursor = sdi->newCursor(opCtx.get());
 
@@ -124,18 +124,18 @@ TEST(WiredTigerStandardIndexText, CursorInActiveTxnAfterSeek) {
         bool inclusive = true;
         auto seekKs = makeKeyStringForSeek(sdi.get(), BSON("" << 1), forward, inclusive);
         ASSERT(cursor->seek(seekKs.finishAndGetBuffer()));
-        ASSERT_TRUE(ru->isActive());
+        ASSERT_TRUE(ru.isActive());
 
-        // Committing a WriteUnitOfWork will end the current transaction.
-        WriteUnitOfWork wuow(opCtx.get());
-        ASSERT_TRUE(ru->isActive());
-        wuow.commit();
-        ASSERT_FALSE(ru->isActive());
+        // Committing a transaction will end the current transaction.
+        StorageWriteTransaction txn(ru);
+        ASSERT_TRUE(ru.isActive());
+        txn.commit();
+        ASSERT_FALSE(ru.isActive());
 
         // If a cursor is used after a WUOW commits, it should implicitly start a new
         // transaction.
         ASSERT(cursor->seek(seekKs.finishAndGetBuffer()));
-        ASSERT_TRUE(ru->isActive());
+        ASSERT_TRUE(ru.isActive());
     }
 }
 
@@ -153,8 +153,9 @@ TEST(WiredTigerUniqueIndexTest, OldFormatKeys) {
     {
         FailPointEnableBlock insertOldFormatKeys("WTIndexInsertUniqueKeysInOldFormat");
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
 
-        WriteUnitOfWork uow(opCtx.get());
+        StorageWriteTransaction txn(ru);
         auto ks = makeKeyString(sdi.get(), BSON("" << 1), RecordId(1));
         ASSERT_SDI_INSERT_OK(sdi->insert(opCtx.get(), ks, dupsAllowed));
 
@@ -164,7 +165,7 @@ TEST(WiredTigerUniqueIndexTest, OldFormatKeys) {
         ks = makeKeyString(sdi.get(), BSON("" << 3), RecordId(3));
         ASSERT_SDI_INSERT_OK(sdi->insert(opCtx.get(), ks, dupsAllowed));
 
-        uow.commit();
+        txn.commit();
     }
 
     // Ensure cursors return the correct data
@@ -192,8 +193,9 @@ TEST(WiredTigerUniqueIndexTest, OldFormatKeys) {
     // Ensure we can't insert duplicate keys in the new format
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
 
-        WriteUnitOfWork uow(opCtx.get());
+        StorageWriteTransaction txn(ru);
         auto ks = makeKeyString(sdi.get(), BSON("" << 1), RecordId(1));
         ASSERT_SDI_INSERT_DUPLICATE_KEY(
             sdi->insert(opCtx.get(), ks, dupsAllowed), BSON("" << 1), boost::none);
@@ -210,12 +212,13 @@ TEST(WiredTigerUniqueIndexTest, OldFormatKeys) {
     // Ensure that it is not possible to remove a key with a mismatched RecordId.
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
 
-        WriteUnitOfWork uow(opCtx.get());
+        StorageWriteTransaction txn(ru);
         // The key "1" exists, but with RecordId 1, so this should not remove anything.
         auto ks = makeKeyString(sdi.get(), BSON("" << 1), RecordId(2));
         sdi->unindex(opCtx.get(), ks, dupsAllowed);
-        uow.commit();
+        txn.commit();
 
         auto cur = sdi->newCursor(opCtx.get());
         auto seekKs = makeKeyStringForSeek(sdi.get(), BSON("" << 1), true, true);
@@ -227,13 +230,15 @@ TEST(WiredTigerUniqueIndexTest, OldFormatKeys) {
     // Ensure we can remove an old format key and replace it with a new one.
     {
         ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
 
-        WriteUnitOfWork uow(opCtx.get());
+        StorageWriteTransaction txn(ru);
         auto ks = makeKeyString(sdi.get(), BSON("" << 1), RecordId(1));
         sdi->unindex(opCtx.get(), ks, dupsAllowed);
 
+        auto res = sdi->insert(opCtx.get(), ks, dupsAllowed);
         ASSERT_SDI_INSERT_OK(sdi->insert(opCtx.get(), ks, dupsAllowed));
-        uow.commit();
+        txn.commit();
     }
 }
 }  // namespace

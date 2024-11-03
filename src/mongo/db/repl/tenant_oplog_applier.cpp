@@ -36,13 +36,11 @@
 #include <boost/optional.hpp>
 #include <boost/optional/optional.hpp>
 #include <boost/smart_ptr.hpp>
-#include <cstdint>
 // IWYU pragma: no_include "ext/alloc_traits.h"
 #include <algorithm>
 #include <cstddef>
 #include <mutex>
 #include <set>
-#include <tuple>
 #include <type_traits>
 
 #include "mongo/base/error_codes.h"
@@ -56,7 +54,6 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/op_observer/op_observer.h"
 #include "mongo/db/record_id.h"
-#include "mongo/db/repl/cloner_utils.h"
 #include "mongo/db/repl/oplog_applier.h"
 #include "mongo/db/repl/oplog_applier_utils.h"
 #include "mongo/db/repl/oplog_entry_gen.h"
@@ -65,7 +62,6 @@
 #include "mongo/db/repl/session_update_tracker.h"
 #include "mongo/db/repl/tenant_migration_access_blocker_util.h"
 #include "mongo/db/repl/tenant_migration_decoration.h"
-#include "mongo/db/repl/tenant_migration_recipient_service.h"
 #include "mongo/db/repl/tenant_oplog_batcher.h"
 #include "mongo/db/session/logical_session_id_gen.h"
 #include "mongo/db/session/logical_session_id_helpers.h"
@@ -496,9 +492,6 @@ bool isResumeTokenNoop(const OplogEntry& entry) {
         return false;
     }
     if (!entry.getObject().hasField("msg")) {
-        return false;
-    }
-    if (entry.getObject().getStringField("msg") != TenantMigrationRecipientService::kNoopMsg) {
         return false;
     }
     return true;

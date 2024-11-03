@@ -42,7 +42,6 @@
 #include "mongo/db/database_name.h"
 #include "mongo/db/resumable_index_builds_gen.h"
 #include "mongo/db/storage/temporary_record_store.h"
-#include "mongo/util/functional.h"
 #include "mongo/util/str.h"
 
 namespace mongo {
@@ -623,9 +622,6 @@ public:
      * index builds.
      */
     struct ReconcileResult {
-        // A list of IndexIdentifiers that must be rebuilt to completion.
-        std::vector<IndexIdentifier> indexesToRebuild;
-
         // A map of unfinished two-phase indexes that must be restarted in the background, but
         // not to completion; they will wait for replicated commit or abort operations. This is a
         // mapping from index build UUID to index build.

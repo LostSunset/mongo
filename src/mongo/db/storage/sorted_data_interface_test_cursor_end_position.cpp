@@ -30,14 +30,11 @@
 #include <boost/move/utility_core.hpp>
 #include <boost/none.hpp>
 #include <boost/optional/optional.hpp>
-#include <memory>
 
-#include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/storage/index_entry_comparison.h"
-#include "mongo/db/storage/sorted_data_interface.h"
 #include "mongo/db/storage/sorted_data_interface_test_harness.h"
 #include "mongo/unittest/assert.h"
 #include "mongo/unittest/framework.h"
@@ -58,7 +55,6 @@ void testSetEndPosition_Next_Forward(bool unique, bool inclusive) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     // Dup key on end point. Illegal for unique indexes.
     if (!unique)
@@ -106,7 +102,6 @@ void testSetEndPosition_Next_Reverse(bool unique, bool inclusive) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     // Dup key on end point. Illegal for unique indexes.
     if (!unique)
@@ -154,7 +149,6 @@ void testSetEndPosition_Seek_Forward(bool unique, bool inclusive) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get());
     cursor->setEndPosition(key3, inclusive);
@@ -213,7 +207,6 @@ void testSetEndPosition_Seek_Reverse(bool unique, bool inclusive) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get(), false);
     cursor->setEndPosition(key2, inclusive);
@@ -273,7 +266,6 @@ void testSetEndPosition_Restore_Forward(bool unique) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get());
     cursor->setEndPosition(key3, false);  // Should never see key3 or key4.
@@ -317,7 +309,6 @@ void testSetEndPosition_Restore_Reverse(bool unique) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get(), false);
     cursor->setEndPosition(key2, false);  // Should never see key1 or key2.
@@ -364,7 +355,6 @@ void testSetEndPosition_RestoreEndCursor_Forward(bool unique) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get());
     cursor->setEndPosition(key2, true);
@@ -406,7 +396,6 @@ void testSetEndPosition_RestoreEndCursor_Reverse(bool unique) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get(), false);
     cursor->setEndPosition(key3, true);
@@ -450,7 +439,6 @@ void testSetEndPosition_Empty_Forward(bool unique, bool inclusive) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get());
     cursor->setEndPosition(BSONObj(), inclusive);
@@ -486,7 +474,6 @@ void testSetEndPosition_Empty_Reverse(bool unique, bool inclusive) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get(), false);
     cursor->setEndPosition(BSONObj(), inclusive);
@@ -521,7 +508,6 @@ void testSetEndPosition_Character_Limits(bool unique, bool inclusive) {
                                                         });
 
     auto opCtx = harnessHelper->newOperationContext();
-    Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
 
     auto cursor = sorted->newCursor(opCtx.get());
     cursor->setEndPosition(key7, inclusive);

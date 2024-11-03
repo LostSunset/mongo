@@ -30,10 +30,8 @@
 #include <boost/move/utility_core.hpp>
 #include <memory>
 
-#include "mongo/base/string_data.h"
 #include "mongo/db/concurrency/d_concurrency.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
-#include "mongo/db/record_id.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/sorted_data_interface.h"
 #include "mongo/db/storage/sorted_data_interface_test_assert.h"
@@ -45,6 +43,15 @@
 namespace mongo {
 namespace {
 
+bool dupKeyCheck(SortedDataInterface& sorted,
+                 OperationContext* opCtx,
+                 const key_string::Value& keyString) {
+    return sorted.dupKeyCheck(opCtx, SortedDataKeyValueView::fromValue(keyString)).has_value();
+}
+bool dupKeyCheck(SortedDataInterface& sorted, OperationContext* opCtx, BSONObj bsonKey) {
+    return dupKeyCheck(sorted, opCtx, makeKeyString(&sorted, bsonKey));
+}
+
 // Insert a key and verify that dupKeyCheck() returns a non-OK status for
 // the same key. When dupKeyCheck() is called with the exact (key, RecordId)
 // pair that was inserted, it should still return an OK status.
@@ -55,34 +62,32 @@ TEST(SortedDataInterface, DupKeyCheckAfterInsert) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         {
-            WriteUnitOfWork uow(opCtx.get());
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+            StorageWriteTransaction txn(ru);
             ASSERT_SDI_INSERT_OK(
                 sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc1), false));
-            uow.commit();
+            txn.commit();
         }
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         {
-            WriteUnitOfWork uow(opCtx.get());
-            ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), makeKeyString(sorted.get(), key1)));
-            uow.commit();
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+            StorageWriteTransaction txn(ru);
+            ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), key1));
+            txn.commit();
         }
     }
 }
@@ -100,30 +105,27 @@ TEST(SortedDataInterface, DupKeyCheckAfterInsertKeyString) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         {
-            WriteUnitOfWork uow(opCtx.get());
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+            StorageWriteTransaction txn(ru);
             ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(), keyString1, false));
-            uow.commit();
+            txn.commit();
         }
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
-        ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), keyString1WithoutRecordId));
+        ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), keyString1WithoutRecordId));
     }
 }
 
@@ -136,14 +138,12 @@ TEST(SortedDataInterface, DupKeyCheckEmpty) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
-        ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), makeKeyString(sorted.get(), key1)));
+        ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), key1));
     }
 }
 
@@ -158,14 +158,12 @@ TEST(SortedDataInterface, DupKeyCheckEmptyKeyString) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
-        ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), keyString1WithoutRecordId));
+        ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), keyString1WithoutRecordId));
     }
 }
 
@@ -178,34 +176,32 @@ TEST(SortedDataInterface, DupKeyCheckWhenDiskLocBefore) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         {
-            WriteUnitOfWork uow(opCtx.get());
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+            StorageWriteTransaction txn(ru);
             ASSERT_SDI_INSERT_OK(
                 sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc1), true));
-            uow.commit();
+            txn.commit();
         }
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         {
-            WriteUnitOfWork uow(opCtx.get());
-            ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), makeKeyString(sorted.get(), key1)));
-            uow.commit();
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+            StorageWriteTransaction txn(ru);
+            ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), key1));
+            txn.commit();
         }
     }
 }
@@ -219,34 +215,32 @@ TEST(SortedDataInterface, DupKeyCheckWhenDiskLocAfter) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         {
-            WriteUnitOfWork uow(opCtx.get());
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+            StorageWriteTransaction txn(ru);
             ASSERT_SDI_INSERT_OK(
                 sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc1), true));
-            uow.commit();
+            txn.commit();
         }
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         {
-            WriteUnitOfWork uow(opCtx.get());
-            ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), makeKeyString(sorted.get(), key1)));
-            uow.commit();
+            auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+            StorageWriteTransaction txn(ru);
+            ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), key1));
+            txn.commit();
         }
     }
 }
@@ -258,22 +252,21 @@ TEST(SortedDataInterface, DupKeyCheckWithDuplicates) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
 
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(
             sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc1), true));
         ASSERT_SDI_INSERT_OK(
             sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc2), true));
-        uow.commit();
+        txn.commit();
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(2, sorted->numEntries(opCtx.get()));
-        ASSERT_TRUE(sorted->dupKeyCheck(opCtx.get(), makeKeyString(sorted.get(), key1)));
+        ASSERT_TRUE(dupKeyCheck(*sorted, opCtx.get(), key1));
     }
 }
 
@@ -288,20 +281,19 @@ TEST(SortedDataInterface, DupKeyCheckWithDuplicateKeyStrings) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
 
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(), keyString1, true));
         ASSERT_SDI_INSERT_OK(sorted->insert(opCtx.get(), keyString2, true));
-        uow.commit();
+        txn.commit();
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(2, sorted->numEntries(opCtx.get()));
-        ASSERT_TRUE(sorted->dupKeyCheck(opCtx.get(), keyString1WithoutRecordId));
+        ASSERT_TRUE(dupKeyCheck(*sorted, opCtx.get(), keyString1WithoutRecordId));
     }
 }
 
@@ -312,30 +304,29 @@ TEST(SortedDataInterface, DupKeyCheckWithDeletedFirstEntry) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
 
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(
             sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc1), true));
         ASSERT_SDI_INSERT_OK(
             sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc2), true));
-        uow.commit();
+        txn.commit();
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         sorted->unindex(opCtx.get(), makeKeyString(sorted.get(), key1, loc1), true);
-        uow.commit();
+        txn.commit();
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
-        ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), makeKeyString(sorted.get(), key1)));
+        ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), key1));
     }
 }
 
@@ -346,29 +337,28 @@ TEST(SortedDataInterface, DupKeyCheckWithDeletedSecondEntry) {
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT(sorted->isEmpty(opCtx.get()));
 
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         ASSERT_SDI_INSERT_OK(
             sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc1), true));
         ASSERT_SDI_INSERT_OK(
             sorted->insert(opCtx.get(), makeKeyString(sorted.get(), key1, loc2), true));
-        uow.commit();
+        txn.commit();
     }
 
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
-        WriteUnitOfWork uow(opCtx.get());
+        auto& ru = *shard_role_details::getRecoveryUnit(opCtx.get());
+        StorageWriteTransaction txn(ru);
         sorted->unindex(opCtx.get(), makeKeyString(sorted.get(), key1, loc2), true);
-        uow.commit();
+        txn.commit();
     }
     {
         const ServiceContext::UniqueOperationContext opCtx(harnessHelper->newOperationContext());
-        Lock::GlobalLock globalLock(opCtx.get(), MODE_X);
         ASSERT_EQUALS(1, sorted->numEntries(opCtx.get()));
-        ASSERT_FALSE(sorted->dupKeyCheck(opCtx.get(), makeKeyString(sorted.get(), key1)));
+        ASSERT_FALSE(dupKeyCheck(*sorted, opCtx.get(), key1));
     }
 }
 

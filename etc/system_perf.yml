@@ -1,6 +1,6 @@
 command_type: system
 stepback: false
-exec_timeout_secs: &exec_timeout_secs 21600
+exec_timeout_secs: &exec_timeout_secs 36000
 timeout_secs: &timeout_secs 7200
 
 include:
@@ -411,6 +411,19 @@ buildvariants:
     modules: *modules
     run_on:
       - amazon2-arm64-latest-small
+    tasks:
+      - name: schedule_compile
+      - name: package_supplementary_data
+
+  - name: schedule-compile-amazon2023-arm64
+    display_name: "* Schedule Compile for Amazon Linux 2023 arm64"
+    expansions:
+      compile_variant: amazon2023-arm64-compile
+      compile_task_name: archive_dist_test
+      binary_artifact_name: Binaries
+    modules: *modules
+    run_on:
+      - amazon2023-arm64-latest-small
     tasks:
       - name: schedule_compile
       - name: package_supplementary_data

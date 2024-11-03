@@ -43,7 +43,6 @@
 #include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/db/catalog/validate/validate_results.h"
 #include "mongo/db/index/index_descriptor.h"
-#include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/record_id.h"
 #include "mongo/db/stats/resource_consumption_metrics.h"
@@ -119,7 +118,7 @@ public:
     static StatusWith<std::string> generateCreateString(const std::string& engineName,
                                                         const std::string& sysIndexConfig,
                                                         const std::string& collIndexConfig,
-                                                        const NamespaceString& collectionNamespace,
+                                                        StringData tableName,
                                                         const IndexDescriptor& desc,
                                                         bool isLogged);
 
@@ -165,7 +164,7 @@ public:
                            BSONObjBuilder* output,
                            double scale) const override;
     boost::optional<DuplicateKey> dupKeyCheck(OperationContext* opCtx,
-                                              const key_string::Value& keyString) override;
+                                              const SortedDataKeyValueView& keyString) override;
 
     bool isEmpty(OperationContext* opCtx) override;
 
@@ -196,8 +195,6 @@ public:
         return _indexName;
     }
 
-    NamespaceString getCollectionNamespace(OperationContext* opCtx) const;
-
     virtual bool isIdIndex() const {
         return false;
     }
@@ -209,7 +206,7 @@ public:
     virtual bool isDup(OperationContext* opCtx,
                        WT_CURSOR* c,
                        WiredTigerSession* session,
-                       const key_string::Value& keyString) = 0;
+                       const SortedDataKeyValueView& keyString) = 0;
     virtual bool unique() const = 0;
     virtual bool isTimestampSafeUniqueIdx() const = 0;
 
@@ -248,8 +245,7 @@ protected:
     boost::optional<RecordId> _keyExists(OperationContext* opCtx,
                                          WT_CURSOR* c,
                                          WiredTigerSession* session,
-                                         const key_string::Value& keyString,
-                                         size_t sizeWithoutRecordId);
+                                         const SortedDataKeyValueView& keyString);
 
     /**
      * Sets the upper bound on the passed in cursor to be the maximum value of the KeyString prefix.
@@ -257,8 +253,7 @@ protected:
      */
     void _setUpperBoundForKeyExists(WT_CURSOR* c,
                                     WiredTigerSession* session,
-                                    const key_string::Value& keyString,
-                                    size_t sizeWithoutRecordId);
+                                    const SortedDataKeyValueView& keyString);
 
     /**
      * Returns a DuplicateKey error if the prefix key exists in the index with a different RecordId.
@@ -335,7 +330,7 @@ public:
     bool isDup(OperationContext* opCtx,
                WT_CURSOR* c,
                WiredTigerSession* session,
-               const key_string::Value& keyString) override;
+               const SortedDataKeyValueView& keyString) override;
 
 
 protected:
@@ -399,7 +394,7 @@ public:
     bool isDup(OperationContext* opCtx,
                WT_CURSOR* c,
                WiredTigerSession* session,
-               const key_string::Value& keyString) override {
+               const SortedDataKeyValueView& keyString) override {
         // Unimplemented by _id indexes for lack of need
         MONGO_UNREACHABLE;
     }
@@ -455,7 +450,7 @@ public:
     bool isDup(OperationContext* opCtx,
                WT_CURSOR* c,
                WiredTigerSession* session,
-               const key_string::Value& keyString) override {
+               const SortedDataKeyValueView& keyString) override {
         // Unimplemented by non-unique indexes
         MONGO_UNREACHABLE;
     }

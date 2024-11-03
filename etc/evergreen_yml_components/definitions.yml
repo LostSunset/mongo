@@ -584,6 +584,14 @@ functions:
       exec_timeout_secs: ${exec_timeout_secs}
       timeout_secs: ${timeout_secs}
 
+  "set code coverage expansion": &set_code_coverage_expansion
+    command: expansions.update
+    display_name: "set code coverage expansion"
+    params:
+      updates:
+        - key: gather_code_coverage_results
+          value: "true"
+
   ### Set expansion macros used in each task.
   "set task expansion macros": &set_task_expansion_macros
     command: expansions.update
@@ -605,13 +613,13 @@ functions:
         - key: mongo_jstestshell_debugsymbols
           value: ${project}/${compile_variant}/${version_id}/binaries/mongo-jstestshell-debugsymbols-${revision_order_id}.tgz
         - key: mongo_artifacts
-          value: ${project}/${compile_variant}/${version_id}/artifacts/${revision_order_id}.tgz
+          value: ${project}/${compile_variant}/${version_id}/artifacts/artifacts-${revision_order_id}.tgz
         - key: mongo_benchmarks
           value: ${project}/${compile_variant}/${version_id}/binaries/benchmarks-${revision_order_id}.${ext|tgz}
         - key: mongo_benchmarks_debugsymbols
           value: ${project}/${compile_variant}/${version_id}/binaries/benchmarksdebugsymbols-${revision_order_id}.${ext|tgz}
         - key: mongo_venv
-          value: ${project}/${compile_variant}/${version_id}/venv/${revision_order_id}.tgz
+          value: ${project}/${compile_variant}/${version_id}/venv/venv-${revision_order_id}.tgz
         - key: mongo_fuzzer_corpus_mciuploads
           value: ${project}/${build_variant}/${version_id}/libfuzzer-corpora/corpora-${revision_order_id}.${ext|tgz}
         - key: mongo_fuzzer_corpus
@@ -1160,6 +1168,8 @@ functions:
           - key: aws_secret_remote
             value: ${mongodatafiles_aws_secret}
     - *f_expansions_write
+    - *set_code_coverage_expansion
+    - *f_expansions_write
     - *set_up_remote_credentials
     - *f_expansions_write
     - *determine_resmoke_jobs
@@ -1187,6 +1197,8 @@ functions:
     - *update_task_timeout_expansions
     - *f_expansions_write
     - *update_task_timeout
+    - *f_expansions_write
+    - *set_code_coverage_expansion
     - *f_expansions_write
     - command: expansions.update
       params:
@@ -1411,6 +1423,8 @@ functions:
   "bazel coverage":
     - *get_version_expansions
     - *apply_version_expansions
+    - *f_expansions_write
+    - *set_code_coverage_expansion
     - *f_expansions_write
     - *bazel_coverage_sh
 

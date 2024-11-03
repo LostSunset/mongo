@@ -27,8 +27,6 @@
  *    it in the license file.
  */
 
-#include <memory>
-
 #include "mongo/bson/bsonelement.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -71,7 +69,7 @@ public:
         auto oplogCollection =
             catalog->lookupCollectionByNamespace(opCtx, NamespaceString::kRsOplogNamespace);
         if (oplogCollection) {
-            oplogCollection->getRecordStore()->getOplogTruncateStats(builder);
+            oplogCollection->getRecordStore()->oplog()->getTruncateStats(builder);
         }
         return builder.obj();
     }

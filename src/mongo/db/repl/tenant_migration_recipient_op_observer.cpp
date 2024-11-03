@@ -46,7 +46,6 @@
 #include "mongo/db/repl/tenant_migration_decoration.h"
 #include "mongo/db/repl/tenant_migration_recipient_access_blocker.h"
 #include "mongo/db/repl/tenant_migration_state_machine_gen.h"
-#include "mongo/db/serverless/serverless_operation_lock_registry.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/tenant_id.h"
@@ -56,7 +55,6 @@
 #include "mongo/logv2/log_attr.h"
 #include "mongo/logv2/log_component.h"
 #include "mongo/util/assert_util.h"
-#include "mongo/util/decorable.h"
 #include "mongo/util/str.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kReplication
@@ -142,16 +140,6 @@ void TenantMigrationRecipientOpObserver::onInserts(
             auto recipientStateDoc = TenantMigrationRecipientDocument::parse(
                 IDLParserContext("recipientStateDoc"), it->doc);
             if (!recipientStateDoc.getExpireAt()) {
-                ServerlessOperationLockRegistry::get(opCtx->getServiceContext())
-                    .acquireLock(ServerlessOperationLockRegistry::LockType::kTenantRecipient,
-                                 recipientStateDoc.getId());
-                shard_role_details::getRecoveryUnit(opCtx)->onRollback(
-                    [migrationId = recipientStateDoc.getId()](OperationContext* opCtx) {
-                        ServerlessOperationLockRegistry::get(opCtx->getServiceContext())
-                            .releaseLock(
-                                ServerlessOperationLockRegistry::LockType::kTenantRecipient,
-                                migrationId);
-                    });
             }
         }
     }
@@ -168,9 +156,6 @@ void TenantMigrationRecipientOpObserver::onUpdate(OperationContext* opCtx,
         shard_role_details::getRecoveryUnit(opCtx)->onCommit(
             [recipientStateDoc](OperationContext* opCtx, boost::optional<Timestamp>) {
                 if (recipientStateDoc.getExpireAt()) {
-                    ServerlessOperationLockRegistry::get(opCtx->getServiceContext())
-                        .releaseLock(ServerlessOperationLockRegistry::LockType::kTenantRecipient,
-                                     recipientStateDoc.getId());
 
                     bool shouldCleanAccessBlockers = false;
                     auto cleanUpBlockerIfGarbage =
@@ -259,14 +244,11 @@ repl::OpTime TenantMigrationRecipientOpObserver::onDropCollection(
     std::uint64_t numRecords,
     bool markFromMigrate) {
     if (collectionName == NamespaceString::kTenantMigrationRecipientsNamespace) {
-        shard_role_details::getRecoveryUnit(opCtx)->onCommit([](OperationContext* opCtx,
-                                                                boost::optional<Timestamp>) {
-            TenantMigrationAccessBlockerRegistry::get(opCtx->getServiceContext())
-                .removeAll(TenantMigrationAccessBlocker::BlockerType::kRecipient);
-
-            ServerlessOperationLockRegistry::get(opCtx->getServiceContext())
-                .onDropStateCollection(ServerlessOperationLockRegistry::LockType::kTenantRecipient);
-        });
+        shard_role_details::getRecoveryUnit(opCtx)->onCommit(
+            [](OperationContext* opCtx, boost::optional<Timestamp>) {
+                TenantMigrationAccessBlockerRegistry::get(opCtx->getServiceContext())
+                    .removeAll(TenantMigrationAccessBlocker::BlockerType::kRecipient);
+            });
     }
     return {};
 }
