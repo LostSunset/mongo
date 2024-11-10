@@ -1464,6 +1464,8 @@ def mongo_cc_library(
         hdrs = hdrs + ["//src/mongo:mongo_config_header"]
         if name != "boost_assert_shim":
             deps += MONGO_GLOBAL_SRC_DEPS
+            if name != "_global_header_bypass":
+                deps += ["//src/mongo:_global_header_bypass"]
 
     if "modules/enterprise" in native.package_name():
         enterprise_compatible = select({
@@ -1646,6 +1648,27 @@ def mongo_cc_library(
         deps = deps + cc_deps + [name + HEADER_DEP_SUFFIX],
     )
 
+def write_sources_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".sources_list")
+    ctx.actions.write(
+        out,
+        "\n".join(ctx.attr.sources),
+    )
+    return [
+        DefaultInfo(
+            files = depset([out]),
+        ),
+    ]
+
+write_sources = rule(
+    write_sources_impl,
+    attrs = {
+        "sources": attr.string_list(
+            doc = "the sources used to build the binary",
+        ),
+    },
+)
+
 def _mongo_cc_binary_and_program(
         name,
         srcs = [],
@@ -1675,6 +1698,7 @@ def _mongo_cc_binary_and_program(
     if native.package_name().startswith("src/mongo"):
         srcs = srcs + ["//src/mongo:mongo_config_header"]
         deps += MONGO_GLOBAL_SRC_DEPS
+        deps += ["//src/mongo:_global_header_bypass"]
 
     if "modules/enterprise" in native.package_name():
         enterprise_compatible = select({
@@ -1735,10 +1759,28 @@ def _mongo_cc_binary_and_program(
             "//bazel/config:linkstatic_disabled": deps,
             "//conditions:default": [],
         }),
-        "target_compatible_with": target_compatible_with + enterprise_compatible,
+        "target_compatible_with": target_compatible_with + enterprise_compatible + select({
+            "//bazel/config:shared_archive_enabled": ["@platforms//:incompatible"],
+            "//conditions:default": [],
+        }),
         "additional_linker_inputs": additional_linker_inputs + MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS,
         "exec_properties": exec_properties,
     } | kwargs
+
+    create_link_deps(
+        name = name + LINK_DEP_SUFFIX,
+        target_name = name,
+        link_deps = all_deps,
+        tags = ["scons_link_lists"],
+        testonly = testonly,
+        target_compatible_with = target_compatible_with + enterprise_compatible,
+    )
+
+    write_sources(
+        name = name + "_sources_list",
+        sources = srcs,
+        tags = ["scons_link_lists"],
+    )
 
     if _program_type == "binary":
         cc_binary(**args)
@@ -1783,7 +1825,8 @@ def mongo_cc_binary(
         defines = [],
         additional_linker_inputs = [],
         features = [],
-        exec_properties = {}):
+        exec_properties = {},
+        **kwargs):
     """Wrapper around cc_binary.
 
     Args:
@@ -1831,6 +1874,7 @@ def mongo_cc_binary(
         features,
         exec_properties,
         _program_type = "binary",
+        **kwargs
     )
 
 def mongo_cc_test(
@@ -1850,7 +1894,8 @@ def mongo_cc_test(
         defines = [],
         additional_linker_inputs = [],
         features = [],
-        exec_properties = {}):
+        exec_properties = {},
+        **kwargs):
     """Wrapper around cc_test.
 
     Args:
@@ -1897,6 +1942,47 @@ def mongo_cc_test(
         features,
         exec_properties,
         _program_type = "test",
+        **kwargs
+    )
+
+def mongo_cc_unit_test(
+        name,
+        srcs = [],
+        deps = [],
+        header_deps = [],
+        visibility = None,
+        data = [],
+        tags = [],
+        copts = [],
+        linkopts = [],
+        includes = [],
+        linkstatic = False,
+        local_defines = [],
+        target_compatible_with = [],
+        defines = [],
+        additional_linker_inputs = [],
+        features = [],
+        exec_properties = {},
+        **kwargs):
+    mongo_cc_test(
+        name = name,
+        srcs = srcs,
+        deps = deps + ["//src/mongo/unittest:unittest_main"],
+        header_deps = header_deps,
+        visibility = visibility,
+        data = data,
+        tags = tags + ["no-remote-exec", "no-remote-cache"],
+        copts = copts,
+        linkopts = linkopts,
+        includes = includes,
+        linkstatic = linkstatic,
+        local_defines = local_defines,
+        target_compatible_with = target_compatible_with,
+        defines = defines,
+        additional_linker_inputs = additional_linker_inputs,
+        features = features,
+        exec_properties = exec_properties,
+        **kwargs
     )
 
 IdlInfo = provider(
@@ -1965,7 +2051,7 @@ def idl_generator_impl(ctx):
         ),
     ]
 
-idl_generator = rule(
+idl_generator_rule = rule(
     idl_generator_impl,
     attrs = {
         "deps": attr.label_list(
@@ -1998,6 +2084,39 @@ idl_generator = rule(
     toolchains = ["@bazel_tools//tools/python:toolchain_type"],
     fragments = ["py"],
 )
+
+def write_target_impl(ctx):
+    out = ctx.actions.declare_file(ctx.label.name + ".gen_source_list")
+    ctx.actions.write(
+        out,
+        "//" + ctx.label.package + ":" + ctx.attr.target_name,
+    )
+    return [
+        DefaultInfo(
+            files = depset([out]),
+        ),
+    ]
+
+write_target = rule(
+    write_target_impl,
+    attrs = {
+        "target_name": attr.string(
+            doc = "the name of the target to record",
+        ),
+    },
+)
+
+def idl_generator(name, tags = [], **kwargs):
+    write_target(
+        name = name + "_gen_source_tag",
+        target_name = name,
+        tags = ["scons_link_lists"],
+    )
+    idl_generator_rule(
+        name = name,
+        tags = tags + ["gen_source"],
+        **kwargs
+    )
 
 def symlink_impl(ctx):
     ctx.actions.symlink(
@@ -2132,5 +2251,36 @@ def mongo_cc_grpc_library(
         deps = deps +
                ["//src/third_party/grpc:grpc++_codegen_proto"],
         cc_deps = [":" + cc_proto_target],
+        **kwargs
+    )
+
+def mongo_idl_library(
+        name,
+        src,
+        idl_deps = [],
+        idl_hdrs = [],
+        deps = [],
+        **kwargs):
+    """
+    Args:
+      name: The name of the IDL library.
+      src: The IDL src.
+      idl_deps: The idl_generator deps.
+      idl_hdrs: The idl_generator hdrs.
+      deps: The mongo_cc_library deps.
+    """
+
+    idl_gen_name = name + "_gen"
+    idl_generator(
+        name = idl_gen_name,
+        src = src,
+        hdrs = idl_hdrs,
+        deps = idl_deps,
+    )
+
+    mongo_cc_library(
+        name = name,
+        srcs = [idl_gen_name],
+        deps = deps,
         **kwargs
     )

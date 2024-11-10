@@ -68,7 +68,7 @@
 #include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
-#include "mongo/db/index_builds_coordinator.h"
+#include "mongo/db/index_builds/index_builds_coordinator.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/find_command.h"
 #include "mongo/db/query/get_executor.h"
@@ -89,7 +89,6 @@
 #include "mongo/db/repl/rollback_impl_gen.h"
 #include "mongo/db/repl/split_prepare_session_manager.h"
 #include "mongo/db/repl/storage_interface.h"
-#include "mongo/db/repl/tenant_migration_access_blocker_util.h"
 #include "mongo/db/repl/transaction_oplog_application.h"
 #include "mongo/db/s/type_shard_identity.h"
 #include "mongo/db/server_options.h"
@@ -724,10 +723,6 @@ void RollbackImpl::_runPhaseFromAbortToReconstructPreparedTxns(
     // Sets the correct post-rollback counts on any collections whose counts changed during the
     // rollback.
     _correctRecordStoreCounts(opCtx);
-
-    if (_replicationCoordinator->getSettings().isServerless()) {
-        tenant_migration_access_blocker::recoverTenantMigrationAccessBlockers(opCtx);
-    }
 
     // Reconstruct prepared transactions after counts have been adjusted. Since prepared
     // transactions were aborted (i.e. the in-memory counts were rolled-back) before computing

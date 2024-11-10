@@ -9,8 +9,14 @@ import {documentEq} from "jstests/aggregation/extras/utils.js";
  */
 export function getQueryPlanners(explain) {
     return getAllNodeExplains(explain).flatMap(nodeExplain => {
-        const queryPlanners = getNestedProperties(nodeExplain, "queryPlanner");
-        return queryPlanners.length == 0 ? [nodeExplain] : queryPlanners;
+        // When the shards are present in 'queryPlanner.winningPlan', then the 'nodeExplain' itself
+        // represents the shard's 'queryPlanner'.
+        const isQueryPlanner = nodeExplain.hasOwnProperty("winningPlan");
+        if (isQueryPlanner) {
+            return [nodeExplain];
+        }
+        // Otherwise, the planner outputs will be nested deeper under a 'queryPlanner' field.
+        return getNestedProperties(nodeExplain, "queryPlanner");
     });
 }
 
@@ -138,7 +144,10 @@ export function getWinningPlanFromExplain(explain, isSBEPlan = false) {
         }
     }
 
-    let queryPlanner = getQueryPlanner(explain);
+    let queryPlanner = explain;
+    if (explain.hasOwnProperty("queryPlanner") || explain.hasOwnProperty("stages")) {
+        queryPlanner = getQueryPlanner(explain);
+    }
     return isSBEPlan ? getWinningSBEPlan(queryPlanner) : getWinningPlan(queryPlanner);
 }
 
@@ -1197,6 +1206,7 @@ export function canonicalizePlan(p) {
     delete p.isCached;
     delete p.cardinalityEstimate;
     delete p.costEstimate;
+    delete p.estimatesMetadata;
     if (p.hasOwnProperty("inputStage")) {
         canonicalizePlan(p.inputStage);
     } else if (p.hasOwnProperty("inputStages")) {
@@ -1204,4 +1214,21 @@ export function canonicalizePlan(p) {
             canonicalizePlan(s);
         });
     }
+}
+
+/**
+ * Returns index of stage in a aggregation pipeline stage plan running on a single node
+ * (will not work for sharded clusters).
+ * 'root' is root of explain JSON.
+ * Returns -1 if stage does not exist.
+ */
+export function getIndexOfStageOnSingleNode(root, stageName) {
+    if (root.hasOwnProperty("stages")) {
+        for (let i = 0; i < root.stages.length; i++) {
+            if (root.stages[i].hasOwnProperty(stageName)) {
+                return i;
+            }
+        }
+    }
+    return -1;
 }

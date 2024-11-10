@@ -30,6 +30,7 @@
 #include "mongo/db/query/cost_based_ranker/heuristic_estimator.h"
 
 #include <fmt/format.h>
+#include <span>
 
 #include "mongo/db/matcher/expression_leaf.h"
 #include "mongo/db/matcher/expression_type.h"
@@ -81,14 +82,14 @@ SelectivityEstimate heuristicPointIntervalSel(CardinalityEstimate inputCard) {
                                EstimationSource::Heuristics};
 }
 
-SelectivityEstimate estimateLeafMatchExpression(MatchExpression* expr,
+SelectivityEstimate estimateLeafMatchExpression(const MatchExpression* expr,
                                                 CardinalityEstimate inputCard) {
     return [&]() -> SelectivityEstimate {
         switch (expr->matchType()) {
             case MatchExpression::MatchType::ALWAYS_FALSE:
-                return zeroSel;
+                return zeroSelHeuristic;
             case MatchExpression::MatchType::ALWAYS_TRUE:
-                return oneSel;
+                return oneSelHeuristic;
             case MatchExpression::MatchType::EQ:
             case MatchExpression::MatchType::INTERNAL_EXPR_EQ: {
                 // Equality predicate is equalivent to a point interval
@@ -106,7 +107,7 @@ SelectivityEstimate estimateLeafMatchExpression(MatchExpression* expr,
                 return kRegexSel;
             case MatchExpression::MatchType::MOD: {
                 // Assume that the results of mod are equally likely.
-                auto modExpr = static_cast<ModMatchExpression*>(expr);
+                auto modExpr = static_cast<const ModMatchExpression*>(expr);
                 return {SelectivityType{1.0 / modExpr->getDivisor()}, EstimationSource::Heuristics};
             }
             case MatchExpression::MatchType::EXISTS: {
@@ -115,20 +116,20 @@ SelectivityEstimate estimateLeafMatchExpression(MatchExpression* expr,
             case MatchExpression::MatchType::MATCH_IN: {
                 // Construct vector of selectivities for each element in the $in list and perform
                 // disjunction estimation.
-                auto inExpr = static_cast<InMatchExpression*>(expr);
+                auto inExpr = static_cast<const InMatchExpression*>(expr);
                 std::vector<SelectivityEstimate> sels(inExpr->getEqualities().size(),
                                                       heuristicPointIntervalSel(inputCard));
                 sels.insert(sels.end(), inExpr->getRegexes().size(), kRegexSel);
-                return disjExponentialBackoff(std::move(sels));
+                return disjExponentialBackoff(sels);
             }
             case MatchExpression::MatchType::TYPE_OPERATOR: {
                 // Treat each operand in a $type operator as a closed interval. Estimate it by
                 // constructing a vector a selecitvies (one per type specified) and perform
                 // disjunction estimation, similar to $in.
-                auto typeExpr = static_cast<TypeMatchExpression*>(expr);
+                auto typeExpr = static_cast<const TypeMatchExpression*>(expr);
                 std::vector<SelectivityEstimate> sels(typeExpr->typeSet().bsonTypes.size(),
                                                       heuristicClosedRangeSel(inputCard));
-                return disjExponentialBackoff(std::move(sels));
+                return disjExponentialBackoff(sels);
             }
             case MatchExpression::MatchType::BITS_ALL_SET:
             case MatchExpression::MatchType::BITS_ALL_CLEAR:
@@ -146,14 +147,14 @@ SelectivityEstimate estimateLeafMatchExpression(MatchExpression* expr,
 
 SelectivityEstimate estimateInterval(const Interval& interval, CardinalityEstimate inputCard) {
     if (interval.isEmpty() || interval.isNull()) {
-        return zeroSel;
+        return zeroSelHeuristic;
     }
     if (interval.isFullyOpen()) {
-        return oneSel;
+        return oneSelHeuristic;
     }
     if (interval.isPoint()) {
         if (inputCard <= oneCE) {
-            return oneSel;
+            return oneSelHeuristic;
         }
         return heuristicPointIntervalSel(inputCard);
     }

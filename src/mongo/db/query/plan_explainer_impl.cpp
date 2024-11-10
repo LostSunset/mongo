@@ -58,6 +58,7 @@
 #include "mongo/db/exec/text_match.h"
 #include "mongo/db/field_ref.h"
 #include "mongo/db/keypattern.h"
+#include "mongo/db/query/cost_based_ranker/estimates_storage.h"
 #include "mongo/db/query/plan_explainer_impl.h"
 #include "mongo/db/query/plan_ranking_decision.h"
 #include "mongo/db/query/plan_summary_stats_visitor.h"
@@ -251,8 +252,11 @@ void statsToBSON(const stage_builder::PlanStageToQsnMap& planStageQsnMap,
     // Cost and cardinality of the stage.
     if (querySolutionNode && estimates.contains(querySolutionNode)) {
         const auto& est = estimates.at(querySolutionNode);
-        bob->append("cardinalityEstimate", est.cardinalty.toDouble());
+        bob->append("cardinalityEstimate", est.outCE.toDouble());
         bob->append("costEstimate", est.cost.toDouble());
+        BSONObjBuilder metadataBob(bob->subobjStart("estimatesMetadata"));
+        metadataBob.append("ceSource", toStringData(est.outCE.source()));
+        metadataBob.done();
     }
 
     // Display the BSON representation of the filter, if there is one.
@@ -379,8 +383,10 @@ void statsToBSON(const stage_builder::PlanStageToQsnMap& planStageQsnMap,
         bob->appendBool("isUnique", spec->isUnique);
         bob->appendBool("isSparse", spec->isSparse);
         bob->appendBool("isPartial", spec->isPartial);
-        bob->appendBool("isShardFiltering", spec->isShardFiltering);
-        bob->appendBool("isFetching", spec->isFetching);
+        if (spec->isShardFilteringDistinctScanEnabled) {
+            bob->appendBool("isShardFiltering", spec->isShardFiltering);
+            bob->appendBool("isFetching", spec->isFetching);
+        }
         bob->append("indexVersion", spec->indexVersion);
         bob->append("direction", spec->direction > 0 ? "forward" : "backward");
 

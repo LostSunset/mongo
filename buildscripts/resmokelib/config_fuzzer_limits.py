@@ -98,10 +98,6 @@ config_fuzzer_params = {
             "period": 5,
             "fuzz_at": ["startup", "runtime"],
         },
-        "initialServiceExecutorUseDedicatedThread": {
-            "choices": [True, False],
-            "fuzz_at": ["startup"],
-        },
         "initialSyncMethod": {"choices": ["fileCopyBased", "logical"], "fuzz_at": ["startup"]},
         # For `initialSyncSourceReadPreference`, the option `secondary` is excluded from the fuzzer
         # because the generated mongod parameters are used for every node in the replica set, so the
@@ -357,16 +353,56 @@ config_fuzzer_params = {
             "fuzz_at": ["startup"],
         },
         # Choose whether to shuffle the list command results or not.
-        # TODO SERVER-95058: Uncomment this once the config fuzzer can run the shuffling again.
-        # "failpoint.shuffleListCommandResults": {"choices": [{"mode": "off"}, {"mode": "alwaysOn"}]},
+        "failpoint.shuffleListCommandResults": {
+            "choices": [{"mode": "off"}, {"mode": "alwaysOn"}],
+            "fuzz_at": ["startup"],
+        },
+        "logLevel": {
+            "min": 0,
+            "max": 5,
+            "period": 5,
+            "fuzz_at": ["startup", "runtime"],
+        },
+        "enableDetailedConnectionHealthMetricLogLines": {
+            "choices": [True, False],
+            "period": 5,
+            "fuzz_at": ["startup", "runtime"],
+        },
+        "tcpFastOpenServer": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "tcpFastOpenClient": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "tcpFastOpenQueueSize": {
+            "min": 1,
+            "max": 4096,
+            "fuzz_at": ["startup"],
+        },
+        "warmMinConnectionsInShardingTaskExecutorPoolOnStartup": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "diagnosticDataCollectionEnabled": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "diagnosticDataCollectionVerboseTCMalloc": {
+            "choices": [True, False],
+            "period": 10,
+            "fuzz_at": ["startup", "runtime"],
+        },
+        "diagnosticDataCollectionEnableLatencyHistograms": {
+            "choices": [True, False],
+            "period": 10,
+            "fuzz_at": ["startup", "runtime"],
+        },
     },
     "mongos": {
         # We need a higher timeout to account for test slowness
         "defaultConfigCommandTimeoutMS": {"default": 90_000, "fuzz_at": ["startup"]},
-        "initialServiceExecutorUseDedicatedThread": {
-            "choices": [True, False],
-            "fuzz_at": ["startup"],
-        },
         "internalQueryFindCommandBatchSize": {"min": 1, "max": 500, "fuzz_at": ["startup"]},
         "opportunisticSecondaryTargeting": {"choices": [True, False], "fuzz_at": ["startup"]},
         "ShardingTaskExecutorPoolReplicaSetMatching": {
@@ -378,6 +414,52 @@ config_fuzzer_params = {
             "max": 86400,
             "period": 5,
             "fuzz_at": ["runtime"],
+        },
+        "replicaSetMonitorProtocol": {
+            "choices": ["streamable", "sdam"],
+            "fuzz_at": ["startup"],
+        },
+        "logLevel": {
+            "min": 0,
+            "max": 5,
+            "period": 5,
+            "fuzz_at": ["startup", "runtime"],
+        },
+        "enableDetailedConnectionHealthMetricLogLines": {
+            "choices": [True, False],
+            "period": 5,
+            "fuzz_at": ["startup", "runtime"],
+        },
+        "tcpFastOpenServer": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "tcpFastOpenClient": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "tcpFastOpenQueueSize": {
+            "min": 1,
+            "max": 4096,
+            "fuzz_at": ["startup"],
+        },
+        "warmMinConnectionsInShardingTaskExecutorPoolOnStartup": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "diagnosticDataCollectionEnabled": {
+            "choices": [True, False],
+            "fuzz_at": ["startup"],
+        },
+        "diagnosticDataCollectionVerboseTCMalloc": {
+            "choices": [True, False],
+            "period": 10,
+            "fuzz_at": ["startup", "runtime"],
+        },
+        "diagnosticDataCollectionEnableLatencyHistograms": {
+            "choices": [True, False],
+            "period": 10,
+            "fuzz_at": ["startup", "runtime"],
         },
     },
 }

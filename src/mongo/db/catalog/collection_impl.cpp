@@ -316,8 +316,7 @@ CollectionImpl::SharedState::SharedState(OperationContext* opCtx,
       // Capped collections must preserve insertion order, so we serialize writes. One exception are
       // clustered capped collections because they only guarantee insertion order when cluster keys
       // are inserted in monotonically-increasing order.
-      _isCapped(options.capped),
-      _needCappedLock(_isCapped && collection->ns().isReplicated() && !options.clusteredIndex),
+      _needCappedLock(options.capped && collection->ns().isReplicated() && !options.clusteredIndex),
       // The record store will be null when the collection is instantiated as part of the repair
       // path.
       _cappedObserver(_recordStore ? _recordStore->getIdent() : "") {
@@ -606,12 +605,12 @@ Status CollectionImpl::checkValidatorAPIVersionCompatability(OperationContext* o
     const auto& apiParams = APIParameters::get(opCtx);
     const auto apiVersion = apiParams.getAPIVersion().value_or("");
     if (apiParams.getAPIStrict().value_or(false) && apiVersion == "1" &&
-        _validator.expCtxForFilter->exprUnstableForApiV1) {
+        _validator.expCtxForFilter->getExprUnstableForApiV1()) {
         return {ErrorCodes::APIStrictError,
                 "The validator uses unstable expression(s) for API Version 1."};
     }
     if (apiParams.getAPIDeprecationErrors().value_or(false) && apiVersion == "1" &&
-        _validator.expCtxForFilter->exprDeprectedForApiV1) {
+        _validator.expCtxForFilter->getExprDeprecatedForApiV1()) {
         return {ErrorCodes::APIDeprecationError,
                 "The validator uses deprecated expression(s) for API Version 1."};
     }
@@ -727,20 +726,18 @@ Collection::Validator CollectionImpl::parseValidator(
                       .opCtx(opCtx)
                       .collator(CollatorInterface::cloneCollator(_shared->_collator.get()))
                       .ns(ns())
+                      // The match expression parser needs to know that we're parsing an expression
+                      // for a validator to apply some additional checks.
+                      .isParsingCollectionValidator(true)
+                      // Enforce a maximum feature version if requested.
+                      .maxFeatureCompatibilityVersion(maxFeatureCompatibilityVersion)
                       .build();
 
     expCtx->variables.setDefaultRuntimeConstants(opCtx);
 
     // The MatchExpression and contained ExpressionContext created as part of the validator are
     // owned by the Collection and will outlive the OperationContext they were created under.
-    expCtx->opCtx = nullptr;
-
-    // Enforce a maximum feature version if requested.
-    expCtx->maxFeatureCompatibilityVersion = maxFeatureCompatibilityVersion;
-
-    // The match expression parser needs to know that we're parsing an expression for a
-    // validator to apply some additional checks.
-    expCtx->isParsingCollectionValidator = true;
+    expCtx->setOperationContext(nullptr);
 
     // If the validation action is printing logs or the level is "moderate", then disallow any
     // encryption keywords. This is to prevent any plaintext data from showing up in the logs. Also
@@ -1002,7 +999,7 @@ Status CollectionImpl::updateCappedSize(OperationContext* opCtx,
               "Expected newCappedSize or newCappedMax to be non-empty");
 
 
-    if (!_shared->_isCapped) {
+    if (!isCapped()) {
         return Status(ErrorCodes::InvalidNamespace,
                       str::stream() << "Cannot update size on a non-capped collection "
                                     << ns().toStringForErrorMsg());
@@ -1083,7 +1080,7 @@ bool CollectionImpl::areRecordIdsReplicated() const {
 }
 
 bool CollectionImpl::isCapped() const {
-    return _shared->_isCapped;
+    return _metadata->options.capped;
 }
 
 long long CollectionImpl::getCappedMaxDocs() const {

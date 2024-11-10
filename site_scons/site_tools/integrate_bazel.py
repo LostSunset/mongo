@@ -1,6 +1,7 @@
 import atexit
 import errno
 import getpass
+import glob
 import hashlib
 import json
 import os
@@ -123,6 +124,24 @@ class Globals:
     @staticmethod
     def bazel_target(scons_node):
         return Globals.scons2bazel_targets[str(scons_node).replace("\\", "/")]["bazel_target"]
+
+    @staticmethod
+    def bazel_link_file(scons_node):
+        bazel_target = Globals.scons2bazel_targets[str(scons_node).replace("\\", "/")][
+            "bazel_target"
+        ]
+        linkfile = bazel_target.replace("//src/", "bazel-bin/src/") + "_links.list"
+        return "/".join(linkfile.rsplit(":", 1))
+
+    @staticmethod
+    def bazel_sources_file(scons_node):
+        bazel_target = Globals.scons2bazel_targets[str(scons_node).replace("\\", "/")][
+            "bazel_target"
+        ]
+        sources_file = (
+            bazel_target.replace("//src/", "bazel-bin/src/") + "_sources_list.sources_list"
+        )
+        return "/".join(sources_file.rsplit(":", 1))
 
 
 def bazel_debug(msg: str):
@@ -411,6 +430,8 @@ def bazel_build_thread_func(env, log_dir: str, verbose: bool, ninja_generate: bo
         extra_args = ["--output_filter=DONT_MATCH_ANYTHING"]
 
     if ninja_generate:
+        for file in glob.glob("bazel-out/**/*.gen_source_list", recursive=True):
+            os.remove(file)
         extra_args += ["--build_tag_filters=scons_link_lists"]
 
     bazel_cmd = Globals.bazel_base_build_command + extra_args + ["//src/..."]
@@ -664,44 +685,36 @@ def timed_auto_install_bazel(env, libdep, shlib_suffix):
     count_of_auto_installing += 1
 
 
-def auto_install_single_target(env, libdep, suffix, target):
-    bazel_node = env.File(f"#/{target}")
+def auto_install_single_target(env, libdep, suffix, bazel_node):
     auto_install_mapping = env["AIB_SUFFIX_MAP"].get(suffix)
 
-    new_installed_files = env.AutoInstall(
-        "$PREFIX_BINDIR" if mongo_platform.get_running_os_name() == "windows" else "$PREFIX_LIBDIR",
-        bazel_node,
-        AIB_COMPONENT="AIB_DEFAULT_COMPONENT",
+    env.AutoInstall(
+        target=auto_install_mapping.directory,
+        source=[bazel_node],
+        AIB_COMPONENT=env.get("AIB_COMPONENT", "AIB_DEFAULT_COMPONENT"),
         AIB_ROLE=auto_install_mapping.default_role,
         AIB_COMPONENTS_EXTRA=env.get("AIB_COMPONENTS_EXTRA", []),
-        BAZEL_INSTALL="True",
     )
+    auto_installed_libdep = env.GetAutoInstalledFiles(libdep)
+    auto_installed_bazel_node = env.GetAutoInstalledFiles(bazel_node)
 
-    if not new_installed_files:
-        new_installed_files = getattr(bazel_node.attributes, "AIB_INSTALLED_FILES", [])
-    installed_files = getattr(libdep.attributes, "AIB_INSTALLED_FILES", [])
-    setattr(
-        libdep.attributes,
-        "AIB_INSTALLED_FILES",
-        list(set(new_installed_files + installed_files)),
-    )
+    if auto_installed_libdep[0] != auto_installed_bazel_node[0]:
+        env.Depends(auto_installed_libdep[0], auto_installed_bazel_node[0])
+
+    return env.GetAutoInstalledFiles(bazel_node)
 
 
 def auto_install_bazel(env, libdep, shlib_suffix):
-    # we are only interested in queries for shared library thin targets
-    if not str(libdep).endswith(shlib_suffix) or not (
-        libdep.has_builder() and libdep.get_builder().get_name(env) == "ThinTarget"
-    ):
-        return
-
-    bazel_target = env["SCONS2BAZEL_TARGETS"].bazel_target(libdep.path)
-    bazel_libdep = env.File(f"#/{env['SCONS2BAZEL_TARGETS'].bazel_output(libdep.path)}")
+    scons_target = str(libdep).replace(
+        f"{env.Dir('#').abspath}/{env['BAZEL_OUT_DIR']}/src", env.Dir("$BUILD_DIR").path
+    )
+    bazel_target = env["SCONS2BAZEL_TARGETS"].bazel_target(scons_target)
+    bazel_libdep = env.File(f"#/{env['SCONS2BAZEL_TARGETS'].bazel_output(scons_target)}")
 
     query_results = env.CheckBazelDepsCache(bazel_target)
 
     if query_results is None:
-        linkfile = bazel_target.replace("//src/", "bazel-bin/src/") + "_links.list"
-        linkfile = "/".join(linkfile.rsplit(":", 1))
+        linkfile = env["SCONS2BAZEL_TARGETS"].bazel_link_file(scons_target)
         with open(os.path.join(env.Dir("#").abspath, linkfile)) as f:
             query_results = f.read()
 
@@ -720,14 +733,65 @@ def auto_install_bazel(env, libdep, shlib_suffix):
         if not line.endswith(shlib_suffix):
             continue
 
-        if env.GetOption("separate-debug") == "on":
-            shlib_suffix = env.subst("$SHLIBSUFFIX")
-            sep_dbg = env.subst("$SEPDBG_SUFFIX")
-            if sep_dbg and line.endswith(shlib_suffix):
-                debug_file = line + sep_dbg
-                auto_install_single_target(env, bazel_libdep, sep_dbg, debug_file)
+        bazel_node = env.File(f"#/{line}")
+        bazel_node_debug = env.File(f"#/{line}$SEPDBG_SUFFIX")
 
-        auto_install_single_target(env, bazel_libdep, shlib_suffix, line)
+        setattr(bazel_node_debug.attributes, "debug_file_for", bazel_node)
+        setattr(bazel_node.attributes, "separate_debug_files", [bazel_node_debug])
+
+        auto_install_single_target(env, bazel_libdep, shlib_suffix, bazel_node)
+
+        if env.GetAutoInstalledFiles(bazel_libdep):
+            auto_install_single_target(
+                env,
+                getattr(bazel_libdep.attributes, "separate_debug_files")[0],
+                env.subst("$SEPDBG_SUFFIX"),
+                bazel_node_debug,
+            )
+
+    return env.GetAutoInstalledFiles(libdep)
+
+
+def auto_archive_bazel(env, node, already_archived, search_stack):
+    bazel_child = getattr(node.attributes, "AIB_INSTALL_FROM", node)
+    if not str(bazel_child).startswith("bazel-out"):
+        try:
+            bazel_child = env["SCONS2BAZEL_TARGETS"].bazel_output(bazel_child.path)
+        except KeyError:
+            if env.Verbose():
+                print("BazelAutoArchive not processing non bazel target:\n{bazel_child}}")
+            return
+
+    if str(bazel_child) not in already_archived:
+        already_archived.add(str(bazel_child))
+        scons_target = str(bazel_child).replace(
+            f"{env['BAZEL_OUT_DIR']}/src", env.Dir("$BUILD_DIR").path
+        )
+        linkfile = env["SCONS2BAZEL_TARGETS"].bazel_link_file(scons_target)
+
+        with open(os.path.join(env.Dir("#").abspath, linkfile)) as f:
+            query_results = f.read()
+
+        filtered_results = ""
+        for lib in query_results.splitlines():
+            bazel_out_path = lib.replace("\\", "/").replace(
+                f"{env['BAZEL_OUT_DIR']}/src", "bazel-bin/src"
+            )
+            if os.path.exists(
+                env.File("#/" + bazel_out_path + ".exclude_lib").abspath.replace("\\", "/")
+            ):
+                continue
+            filtered_results += lib + "\n"
+        query_results = filtered_results
+        for lib in query_results.splitlines():
+            if str(bazel_child).endswith(env.subst("$SEPDBG_SUFFIX")):
+                debug_file = getattr(env.File("#/" + lib).attributes, "separate_debug_files")[0]
+                bazel_install_file = env.GetAutoInstalledFiles(debug_file)[0]
+            else:
+                bazel_install_file = env.GetAutoInstalledFiles(env.File("#/" + lib))[0]
+
+            if bazel_install_file:
+                search_stack.append(bazel_install_file)
 
 
 def load_bazel_builders(env):
@@ -765,21 +829,10 @@ def prefetch_toolchain(env):
         exec_root = f'bazel-{os.path.basename(env.Dir("#").abspath)}'
         if exec_root and not os.path.exists(f"{exec_root}/external/mongo_toolchain"):
             print("Prefetch the mongo toolchain...")
-
-            local_flags = []
-            if is_local_execution(env):
-                local_flags = ["--config=local"]
-            else:
-                print(
-                    "Running bazel with remote execution enabled. To disable bazel remote execution, please add BAZEL_FLAGS=--config=local to the end of your scons command line invocation."
-                )
-                if not validate_remote_execution_certs(env):
-                    sys.exit(1)
-
             try:
                 retry_call(
                     subprocess.run,
-                    [[Globals.bazel_executable, "build", "@mongo_toolchain"] + local_flags],
+                    [[Globals.bazel_executable, "build", "@mongo_toolchain", "--config=local"]],
                     fkwargs={
                         "env": {**os.environ.copy(), **Globals.bazel_env_variables},
                         "check": True,
@@ -1050,6 +1103,16 @@ def generate(env: SCons.Environment.Environment) -> None:
         minimum_macos_version = "11.0" if normalized_arch == "arm64" else "10.14"
         bazel_internal_flags.append(f"--macos_minimum_os={minimum_macos_version}")
 
+    if normalized_os == "windows":
+        windows_temp_dir = "Z:/bazel_tmp"
+        if os.path.isdir(windows_temp_dir):
+            bazel_internal_flags.append(f"--action_env=TMP={windows_temp_dir}")
+            bazel_internal_flags.append(f"--action_env=TEMP={windows_temp_dir}")
+        else:
+            print(
+                f"Tried to use {windows_temp_dir} as TMP and TEMP environment variables but it did not exist. This will lead to a low cache hit rate."
+            )
+
     http_client_option = env.GetOption("enable-http-client")
     if http_client_option is not None:
         if http_client_option in ["on", "auto"]:
@@ -1065,7 +1128,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         bazel_internal_flags.extend(formatted_options)
 
     if normalized_arch not in ["arm64", "amd64"]:
-        bazel_internal_flags.append("--config=local")
+        bazel_internal_flags.append("--config=no-remote-exec")
     elif os.environ.get("USE_NATIVE_TOOLCHAIN"):
         print("Custom toolchain detected, using --config=local for bazel build.")
         bazel_internal_flags.append("--config=local")
@@ -1074,6 +1137,10 @@ def generate(env: SCons.Environment.Environment) -> None:
         # s390x systems don't have enough RAM to handle the default job count and will
         # OOM unless we reduce it.
         bazel_internal_flags.append("--jobs=3")
+    elif normalized_arch == "ppc64le":
+        # ppc64le builds are OOMing with default concurrency, but it's not clear if it's
+        # an issue with the bazel client itself or in the compiler.
+        bazel_internal_flags.append("--jobs=32")
 
     public_release = False
     # Disable remote execution for public release builds.
@@ -1232,15 +1299,21 @@ def generate(env: SCons.Environment.Environment) -> None:
                 # TODO when we support test lists in bazel we can make BazelPrograms thin targets
                 bazel_program = handle_bazel_program_exception(env, target, outputs)
 
-        if bazel_program:
-            continue
-
         scons_node_strs = [
             bazel_output_file.replace(
                 f"{env['BAZEL_OUT_DIR']}/src", env.Dir("$BUILD_DIR").path.replace("\\", "/")
             )
             for bazel_output_file in outputs
         ]
+
+        if bazel_program:
+            for scons_node, bazel_output_file in zip(scons_node_strs, outputs):
+                Globals.scons2bazel_targets[scons_node.replace("\\", "/")] = {
+                    "bazel_target": target,
+                    "bazel_output": bazel_output_file.replace("\\", "/"),
+                }
+            continue
+
         scons_nodes = env.ThinTarget(
             target=scons_node_strs, source=outputs, NINJA_GENSOURCE_INDEPENDENT=True
         )
@@ -1299,3 +1372,5 @@ def generate(env: SCons.Environment.Environment) -> None:
     env.AddMethod(bazel_query_func, "RunBazelQuery")
     env.AddMethod(ninja_bazel_builder, "NinjaBazelBuilder")
     env.AddMethod(auto_install_bazel, "BazelAutoInstall")
+    env.AddMethod(auto_install_single_target, "BazelAutoInstallSingleTarget")
+    env.AddMethod(auto_archive_bazel, "BazelAutoArchive")

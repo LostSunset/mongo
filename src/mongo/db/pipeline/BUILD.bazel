@@ -102,6 +102,7 @@ mongo_cc_library(
         "document_source_current_op_gen",
         "document_source_densify_gen",
         "document_source_fill_gen",
+        "document_source_hybrid_scoring_input_util.cpp",
         "document_source_hybrid_scoring_util.cpp",
         "document_source_internal_all_collection_stats_gen",
         "document_source_internal_apply_oplog_update_gen",
@@ -146,6 +147,7 @@ mongo_cc_library(
         "change_stream_constants.h",
         "change_stream_helpers.h",
         "document_source_change_stream.h",
+        "document_source_hybrid_scoring_input_util.h",
         "document_source_hybrid_scoring_util.h",
         "document_source_merge.h",
         "document_source_merge_spec.h",
@@ -158,6 +160,9 @@ mongo_cc_library(
         "resume_token.h",
         "single_document_transformation_processor.h",
         "transformer_interface.h",
+        "//src/mongo/db:dbcommands_gen",
+        "//src/mongo/db/catalog:database.h",
+        "//src/mongo/db/catalog:virtual_collection_options.h",
     ],
     deps = [
         ":docs_needed_bounds",  # TODO(SERVER-93876): Remove.
@@ -1191,4 +1196,10 @@ mongo_cc_library(
         "//src/mongo/db:shard_role",
         "//src/mongo/util:periodic_runner",
     ],
+)
+
+# TODO(SERVER-96860): Remove cycle created by moving //src/mongo/db/pipeline:field_path.h to //src/mongo/db/pipeline:field_path
+filegroup(
+    name = "field_path_hdrs",
+    srcs = [":field_path.h"],
 )

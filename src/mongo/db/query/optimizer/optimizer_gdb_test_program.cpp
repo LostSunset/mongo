@@ -27,17 +27,13 @@
  *    it in the license file.
  */
 
+#include "mongo/db/exec/sbe/abt/abt_unit_test_literals.h"
+#include "mongo/db/exec/sbe/abt/abt_unit_test_utils.h"
 #include "mongo/db/query/optimizer/containers.h"
 #include "mongo/db/query/optimizer/explain.h"
-#include "mongo/db/query/optimizer/node.h"  // IWYU pragma: keep
-#include "mongo/db/query/optimizer/node_defs.h"
 #include "mongo/db/query/optimizer/reference_tracker.h"
 #include "mongo/db/query/optimizer/syntax/expr.h"
-#include "mongo/db/query/optimizer/syntax/path.h"
 #include "mongo/db/query/optimizer/syntax/syntax.h"
-#include "mongo/db/query/optimizer/utils/unit_test_abt_literals.h"
-#include "mongo/db/query/optimizer/utils/unit_test_utils.h"
-#include "mongo/db/query/optimizer/utils/utils.h"
 #include "mongo/util/debugger.h"
 
 #if defined(__clang__)
@@ -55,8 +51,6 @@ int clang_optnone main(int argc, char** argv) {
     ABT testABT =
         _binary("And", _binary("Lt", "0"_cint32, "1"_cint32), _binary("Lt", "1"_cint32, "2"_cint32))
             ._n;
-
-    auto prefixId = PrefixId::createForTests();
 
     // Verify output as a sanity check, the real test is in the gdb test file.
     ASSERT_EXPLAIN_V2_AUTO(

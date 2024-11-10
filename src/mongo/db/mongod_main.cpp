@@ -41,7 +41,6 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
-#include <ratio>
 #include <set>
 #include <string>
 #include <utility>
@@ -67,7 +66,6 @@
 #include "mongo/config.h"  // IWYU pragma: keep
 #include "mongo/db/admission/execution_control_init.h"
 #include "mongo/db/audit.h"
-#include "mongo/db/audit_interface.h"
 #include "mongo/db/auth/auth_op_observer.h"
 #include "mongo/db/auth/authorization_backend_interface.h"
 #include "mongo/db/auth/authorization_manager.h"
@@ -109,8 +107,8 @@
 #include "mongo/db/ftdc/ftdc_mongod.h"
 #include "mongo/db/ftdc/util.h"
 #include "mongo/db/global_settings.h"
-#include "mongo/db/index_builds_coordinator.h"
-#include "mongo/db/index_builds_coordinator_mongod.h"
+#include "mongo/db/index_builds/index_builds_coordinator.h"
+#include "mongo/db/index_builds/index_builds_coordinator_mongod.h"
 #include "mongo/db/initialize_server_global_state.h"
 #include "mongo/db/keys_collection_client_direct.h"
 #include "mongo/db/keys_collection_manager.h"
@@ -162,9 +160,6 @@
 #include "mongo/db/repl/replication_recovery.h"
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/storage_interface_impl.h"
-#include "mongo/db/repl/tenant_migration_access_blocker_registry.h"
-#include "mongo/db/repl/tenant_migration_donor_op_observer.h"
-#include "mongo/db/repl/tenant_migration_recipient_op_observer.h"
 #include "mongo/db/repl/tenant_migration_util.h"
 #include "mongo/db/repl/topology_coordinator.h"
 #include "mongo/db/repl/wait_for_majority_service.h"
@@ -173,8 +168,8 @@
 #include "mongo/db/s/collection_sharding_state.h"
 #include "mongo/db/s/collection_sharding_state_factory_shard.h"
 #include "mongo/db/s/config/configsvr_coordinator_service.h"
-#include "mongo/db/s/config/sharding_catalog_manager.h"
 #include "mongo/db/s/config_server_op_observer.h"
+#include "mongo/db/s/ddl_lock_manager.h"
 #include "mongo/db/s/migration_blocking_operation/multi_update_coordinator.h"
 #include "mongo/db/s/migration_chunk_cloner_source_op_observer.h"
 #include "mongo/db/s/migration_util.h"
@@ -202,7 +197,6 @@
 #include "mongo/db/session/logical_session_cache.h"
 #include "mongo/db/session/session_catalog_mongod.h"
 #include "mongo/db/session/session_killer.h"
-#include "mongo/db/session_manager_mongod.h"
 #include "mongo/db/set_change_stream_state_coordinator.h"
 #include "mongo/db/startup_recovery.h"
 #include "mongo/db/startup_warnings_mongod.h"
@@ -247,7 +241,6 @@
 #include "mongo/platform/random.h"
 #include "mongo/rpc/metadata/egress_metadata_hook_list.h"
 #include "mongo/rpc/metadata/metadata_hook.h"
-#include "mongo/rpc/op_msg.h"
 #include "mongo/rpc/reply_builder_interface.h"
 #include "mongo/s/analyze_shard_key_role.h"
 #include "mongo/s/catalog_cache.h"
@@ -273,7 +266,6 @@
 #include "mongo/util/clock_source.h"
 #include "mongo/util/cmdline_utils/censor_cmdline.h"
 #include "mongo/util/concurrency/idle_thread_block.h"
-#include "mongo/util/concurrency/thread_name.h"
 #include "mongo/util/concurrency/thread_pool.h"
 #include "mongo/util/debug_util.h"
 #include "mongo/util/debugger.h"
@@ -432,8 +424,12 @@ void registerPrimaryOnlyServices(ServiceContext* serviceContext) {
     }
 
     if (serverGlobalParams.clusterRole.has(ClusterRole::ShardServer)) {
+        auto shardingDDLCoordinatorService =
+            std::make_unique<ShardingDDLCoordinatorService>(serviceContext);
+        DDLLockManager::get(serviceContext)->setRecoverable(shardingDDLCoordinatorService.get());
+
+        services.emplace_back(std::move(shardingDDLCoordinatorService));
         services.push_back(std::make_unique<RenameCollectionParticipantService>(serviceContext));
-        services.push_back(std::make_unique<ShardingDDLCoordinatorService>(serviceContext));
         services.push_back(std::make_unique<ReshardingDonorService>(serviceContext));
         services.push_back(std::make_unique<ReshardingRecipientService>(serviceContext));
         services.push_back(std::make_unique<MultiUpdateCoordinatorService>(serviceContext));
@@ -1464,12 +1460,7 @@ void setUpObservers(ServiceContext* serviceContext) {
         opObserverRegistry->addObserver(std::make_unique<ShardServerOpObserver>());
         opObserverRegistry->addObserver(std::make_unique<ReshardingOpObserver>());
         opObserverRegistry->addObserver(std::make_unique<UserWriteBlockModeOpObserver>());
-        if (getGlobalReplSettings().isServerless()) {
-            opObserverRegistry->addObserver(
-                std::make_unique<repl::TenantMigrationDonorOpObserver>());
-            opObserverRegistry->addObserver(
-                std::make_unique<repl::TenantMigrationRecipientOpObserver>());
-        }
+
         if (!gMultitenancySupport) {
             opObserverRegistry->addObserver(
                 std::make_unique<analyze_shard_key::QueryAnalysisOpObserverShardSvr>());
@@ -1491,12 +1482,6 @@ void setUpObservers(ServiceContext* serviceContext) {
         opObserverRegistry->addObserver(std::make_unique<FindAndModifyImagesOpObserver>());
         opObserverRegistry->addObserver(std::make_unique<ChangeStreamPreImagesOpObserver>());
         opObserverRegistry->addObserver(std::make_unique<UserWriteBlockModeOpObserver>());
-        if (getGlobalReplSettings().isServerless()) {
-            opObserverRegistry->addObserver(
-                std::make_unique<repl::TenantMigrationDonorOpObserver>());
-            opObserverRegistry->addObserver(
-                std::make_unique<repl::TenantMigrationRecipientOpObserver>());
-        }
 
         auto replCoord = repl::ReplicationCoordinator::get(serviceContext);
         if (!gMultitenancySupport && replCoord && replCoord->getSettings().isReplSet()) {
@@ -1849,20 +1834,6 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
             }
         }
 
-        {
-            // Clear tenant migration access blockers after killing all operation contexts to ensure
-            // that no operation context cancellation token continuation holds the last reference to
-            // the TenantMigrationAccessBlockerExecutor.
-            TimeElapsedBuilderScopedTimer scopedTimer(
-                serviceContext->getFastClockSource(),
-                "Shut down all tenant migration access blockers on global shutdown",
-                &shutdownTimeElapsedBuilder);
-            LOGV2_OPTIONS(5093807,
-                          {LogComponent::kTenantMigration},
-                          "Shutting down all TenantMigrationAccessBlockers on global shutdown");
-            TenantMigrationAccessBlockerRegistry::get(serviceContext).shutDown();
-        }
-
         // Destroy all stashed transaction resources, in order to release locks.
         {
             TimeElapsedBuilderScopedTimer scopedTimer(serviceContext->getFastClockSource(),
@@ -2179,10 +2150,6 @@ int mongod_main(int argc, char* argv[]) {
         // exits directly and so never reaches here either.
     }
 #endif
-
-    LOGV2_OPTIONS(
-        7091600, {LogComponent::kTenantMigration}, "Starting TenantMigrationAccessBlockerRegistry");
-    TenantMigrationAccessBlockerRegistry::get(service).startup();
 
     ExitCode exitCode = initAndListen(service);
     exitCleanly(exitCode);

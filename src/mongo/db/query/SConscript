@@ -179,6 +179,7 @@ env.CppUnitTest(
         "$BUILD_DIR/mongo/db/catalog/collection_query_info",
         "$BUILD_DIR/mongo/db/collection_crud/collection_crud",
         "$BUILD_DIR/mongo/db/exec/document_value/document_value_test_util",
+        "$BUILD_DIR/mongo/db/exec/sbe/abt_unit_test_utils",
         "$BUILD_DIR/mongo/db/exec/sbe/sbe_plan_stage_test",
         "$BUILD_DIR/mongo/db/multitenancy",
         "$BUILD_DIR/mongo/db/pipeline/aggregation_request_helper",
@@ -203,7 +204,6 @@ env.CppUnitTest(
         "index_hint",
         "jparse_util",
         "map_reduce_output_format",
-        "optimizer/unit_test_utils",
         "query_common",
         "query_planner",
         "query_planner_test_fixture",
@@ -251,17 +251,42 @@ env.Benchmark(
     CONSOLIDATED_TARGET="query_bm",
 )
 
-env.Benchmark(
-    target="point_query_bm",
-    source=[
-        "point_query_bm.cpp",
-    ],
+env.Library(
+    target="query_bm_constants",
+    source=["query_bm_constants.cpp"],
+    LIBDEPS_PRIVATE=["$BUILD_DIR/mongo/base"],
+)
+
+bmEnv = env.Clone()
+bmEnv.InjectThirdParty(libraries=["benchmark"])
+
+bmEnv.Library(
+    target="query_bm_fixture",
+    source=["query_bm_fixture.cpp"],
     LIBDEPS=[
         "$BUILD_DIR/mongo/db/catalog/catalog_test_fixture",
         "$BUILD_DIR/mongo/db/query_exec",
         "$BUILD_DIR/mongo/db/read_write_concern_defaults_mock",
         "$BUILD_DIR/mongo/db/repl/storage_interface_impl",
         "$BUILD_DIR/mongo/db/service_context_d",
+        "$BUILD_DIR/third_party/benchmark/benchmark",
     ],
+)
+
+env.Benchmark(
+    target="point_query_bm",
+    source=[
+        "point_query_bm.cpp",
+    ],
+    LIBDEPS=["query_bm_fixture"],
+    CONSOLIDATED_TARGET="query_bm",
+)
+
+env.Benchmark(
+    target="complex_query_bm",
+    source=[
+        "complex_query_bm.cpp",
+    ],
+    LIBDEPS=["query_bm_constants", "query_bm_fixture"],
     CONSOLIDATED_TARGET="query_bm",
 )

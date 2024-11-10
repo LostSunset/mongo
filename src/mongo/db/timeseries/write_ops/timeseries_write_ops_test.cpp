@@ -253,7 +253,7 @@ TEST_F(TimeseriesWriteOpsTest, CommitTimeseriesBucketNoCollection) {
         timeseries::write_ops::details::commitTimeseriesBucket(
             opCtx, batch, 0, 0, {}, {}, nullptr, nullptr, nullptr, map, insertCmdReq),
         DBException,
-        ErrorCodes::NamespaceNotFound);
+        8555700);
 }
 
 }  // namespace

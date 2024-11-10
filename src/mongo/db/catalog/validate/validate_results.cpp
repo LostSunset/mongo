@@ -34,9 +34,73 @@
 #include <boost/optional/optional.hpp>
 
 #include "mongo/base/string_data.h"
+#include "mongo/bson/bsonobjbuilder.h"
 #include "mongo/util/namespace_string_util.h"
 
 namespace mongo {
+
+namespace {
+
+// Up to 1MB of "inconsistency" errors will be kept, i.e. missing/extra index fields.
+const int kMaxIndexInconsistencySize = 1 * 1024 * 1024;
+// Reserving 4MB for index details' error and warning messages.
+static constexpr std::size_t kMaxIndexDetailsSizeBytes = 4 * 1024 * 1024;
+
+struct LargestObjsPopFirstCmp {
+    bool operator()(const BSONObj& l, const BSONObj& r) {
+        return l.objsize() < r.objsize();
+    }
+};
+
+// Helper for adding |obj| to a list of bson objs, where only the smallest objects up to a limit
+// will be kept. At least 1 object will always be kept. Returns true if an element was removed.
+bool addWithSizeLimit(BSONObj obj, std::vector<BSONObj>& list, size_t& usedBytes) {
+    usedBytes += static_cast<size_t>(obj.objsize());
+    list.push_back(std::move(obj));
+    std::push_heap(list.begin(), list.end(), LargestObjsPopFirstCmp{});
+    if (usedBytes <= kMaxIndexInconsistencySize || list.size() <= 1) {
+        return false;
+    }
+    std::pop_heap(list.begin(), list.end(), LargestObjsPopFirstCmp{});
+    usedBytes -= list.back().objsize();
+    list.pop_back();
+    return true;
+}
+
+
+// Builds an array inside output containing the entries up to a given max size per entry.
+void buildFixedSizedArray(BSONObjBuilder& output,
+                          const std::string& fieldname,
+                          const StringSet& entries,
+                          size_t maxSizePerEntry) {
+
+    std::size_t usedSize = 0;
+    BSONArrayBuilder arr(output.subarrayStart(fieldname));
+
+    for (const auto& value : entries) {
+        if (usedSize >= maxSizePerEntry) {
+            return;
+        }
+        arr.append(value);
+        usedSize += value.size();
+    }
+}
+
+}  // namespace
+
+void ValidateResults::addExtraIndexEntry(BSONObj entry) {
+    if (addWithSizeLimit(std::move(entry), _extraIndexEntries, _extraIndexEntriesUsedBytes)) {
+        addError("Not all extra index entry inconsistencies are listed due to size limitations.",
+                 false);
+    }
+}
+
+void ValidateResults::addMissingIndexEntry(BSONObj entry) {
+    if (addWithSizeLimit(std::move(entry), _missingIndexEntries, _missingIndexEntriesUsedBytes)) {
+        addError("Not all missing index entry inconsistencies are listed due to size limitations.",
+                 false);
+    }
+}
 
 void ValidateResults::appendToResultObj(BSONObjBuilder* resultObj,
                                         bool debugging,
@@ -107,16 +171,18 @@ void ValidateResults::appendToResultObj(BSONObjBuilder* resultObj,
     BSONObjBuilder keysPerIndex;
     BSONObjBuilder indexDetails;
     int nIndexes = getIndexResultsMap().size();
+
+    // Each list has a size based on the number of indexes, split between error/warning fields.
+    size_t maxSizePerEntry = (kMaxIndexDetailsSizeBytes / std::max(nIndexes, 1)) / 2;
     for (auto& [indexName, ivr] : getIndexResultsMap()) {
         BSONObjBuilder bob(indexDetails.subobjStart(indexName));
         bob.appendBool("valid", ivr.isValid());
 
         if (!ivr.getWarnings().empty()) {
-            bob.append("warnings", ivr.getWarnings().begin(), ivr.getWarnings().end());
+            buildFixedSizedArray(bob, "warnings", ivr.getWarnings(), maxSizePerEntry);
         }
-
         if (!ivr.getErrors().empty()) {
-            bob.append("errors", ivr.getErrors().begin(), ivr.getErrors().end());
+            buildFixedSizedArray(bob, "errors", ivr.getErrors(), maxSizePerEntry);
         }
 
         keysPerIndex.appendNumber(indexName, static_cast<long long>(ivr.getKeysTraversed()));

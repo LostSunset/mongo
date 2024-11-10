@@ -110,8 +110,6 @@
 #include "mongo/db/record_id_helpers.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/replication_coordinator.h"
-#include "mongo/db/repl/tenant_migration_access_blocker_util.h"
-#include "mongo/db/repl/tenant_migration_conflict_info.h"
 #include "mongo/db/repl/tenant_migration_decoration.h"
 #include "mongo/db/resource_yielder.h"
 #include "mongo/db/s/collection_sharding_state.h"
@@ -517,31 +515,6 @@ bool handleError(OperationContext* opCtx,
         // to access a stable version of the cache during the execution of the batch; the error is
         // returned back to the router to leverage its capability of selectively retrying
         // operations).
-        out->results.emplace_back(ex.toStatus());
-        return false;
-    }
-
-    if (ErrorCodes::isTenantMigrationError(ex)) {
-        // Multiple not-idempotent updates are not safe to retry at the cloud level. We treat these
-        // the same as an interruption due to a repl state change and fail the whole batch.
-        if (isMultiUpdate) {
-            if (ex.code() != ErrorCodes::TenantMigrationConflict) {
-                uassertStatusOK(kNonRetryableTenantMigrationStatus);
-            }
-
-            // If the migration is active, we throw a different code that will be caught higher up
-            // and replaced with a non-retryable code after the migration finishes to avoid wasted
-            // retries.
-            auto migrationConflictInfo = ex.toStatus().extraInfo<TenantMigrationConflictInfo>();
-            uassertStatusOK(
-                Status(NonRetryableTenantMigrationConflictInfo(
-                           migrationConflictInfo->getMigrationId(),
-                           migrationConflictInfo->getTenantMigrationAccessBlocker()),
-                       "Multi update must block until this tenant migration commits or aborts"));
-        }
-
-        // If an op fails due to a TenantMigrationError then subsequent ops will also fail due to a
-        // migration blocking, committing, or aborting.
         out->results.emplace_back(ex.toStatus());
         return false;
     }
@@ -1019,41 +992,7 @@ long long performDelete(OperationContext* opCtx,
 boost::optional<write_ops::WriteError> generateError(OperationContext* opCtx,
                                                      const Status& status,
                                                      int index,
-                                                     size_t numErrors) {
-    if (status.isOK()) {
-        return boost::none;
-    }
-
-    if (status == ErrorCodes::TenantMigrationConflict) {
-        hangWriteBeforeWaitingForMigrationDecision.pauseWhileSet(opCtx);
-
-        Status overwrittenStatus =
-            tenant_migration_access_blocker::handleTenantMigrationConflict(opCtx, status);
-
-        // Interruption errors encountered during batch execution fail the entire batch, so throw on
-        // such errors here for consistency.
-        if (ErrorCodes::isInterruption(overwrittenStatus)) {
-            uassertStatusOK(overwrittenStatus);
-        }
-
-        // Tenant migration errors, similarly to migration errors consume too much space in the
-        // ordered:false responses and get truncated. Since the call to
-        // 'handleTenantMigrationConflict' above replaces the original status, we need to manually
-        // truncate the new reason if the original 'status' was also truncated.
-        if (status.reason().empty()) {
-            overwrittenStatus = overwrittenStatus.withReason("");
-        }
-
-        return generateErrorNoTenantMigration(opCtx, overwrittenStatus, index, numErrors);
-    }
-
-    return generateErrorNoTenantMigration(opCtx, status, index, numErrors);
-}
-
-boost::optional<write_ops::WriteError> generateErrorNoTenantMigration(OperationContext* opCtx,
-                                                                      const Status& status,
-                                                                      int index,
-                                                                      size_t numErrors) noexcept {
+                                                     size_t numErrors) noexcept {
     if (status.isOK()) {
         return boost::none;
     }
@@ -1204,11 +1143,7 @@ WriteResult performInserts(OperationContext* opCtx,
         curOp.debug().additiveMetrics.incrementNinserted(0);
     }
 
-    // If we are performing inserts from tenant migrations, skip checking if the user is allowed to
-    // write to the namespace.
-    if (!repl::tenantMigrationInfo(opCtx)) {
-        uassertStatusOK(userAllowedWriteNS(opCtx, wholeOp.getNamespace()));
-    }
+    uassertStatusOK(userAllowedWriteNS(opCtx, wholeOp.getNamespace()));
 
     const auto [disableDocumentValidation, fleCrudProcessed] = getDocumentValidationFlags(
         opCtx, wholeOp.getWriteCommandRequestBase(), wholeOp.getDbName().tenantId());

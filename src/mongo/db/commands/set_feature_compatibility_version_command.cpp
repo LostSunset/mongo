@@ -80,7 +80,7 @@
 #include "mongo/db/feature_compatibility_version_documentation.h"
 #include "mongo/db/feature_flag.h"
 #include "mongo/db/generic_argument_util.h"
-#include "mongo/db/index_builds_coordinator.h"
+#include "mongo/db/index_builds/index_builds_coordinator.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
@@ -319,7 +319,7 @@ public:
           << multiversion::toString(GenericFCV::kLatest)
           << "' features are enabled, and all nodes in the cluster must be binary version "
           << multiversion::toString(GenericFCV::kLatest) << ". See "
-          << feature_compatibility_version_documentation::kCompatibilityLink << ".";
+          << feature_compatibility_version_documentation::compatibilityLink() << ".";
         return h.str();
     }
 
@@ -689,6 +689,15 @@ private:
             ShardingDDLCoordinatorService::getService(opCtx)
                 ->waitForCoordinatorsOfGivenTypeToComplete(opCtx,
                                                            DDLCoordinatorTypeEnum::kCreateDatabase);
+        }
+
+        // TODO (SERVER-94362) Remove once create database coordinator becomes last lts.
+        if (isDowngrading &&
+            feature_flags::gCreateDatabaseDDLCoordinator
+                .isDisabledOnTargetFCVButEnabledOnOriginalFCV(requestedVersion, originalVersion)) {
+            ShardingDDLCoordinatorService::getService(opCtx)
+                ->waitForCoordinatorsOfGivenTypeToComplete(opCtx,
+                                                           DDLCoordinatorTypeEnum::kDropDatabase);
         }
 
         if (isUpgrading) {
@@ -1617,6 +1626,14 @@ private:
                 requestedVersion)) {
             ShardingDDLCoordinatorService::getService(opCtx)
                 ->waitForCoordinatorsOfGivenTypeToComplete(opCtx, DDLCoordinatorTypeEnum::kCollMod);
+        }
+
+        // TODO SERVER-94362: Remove once create database coordinator becomes last lts.
+        if (role && role->has(ClusterRole::ShardServer) &&
+            feature_flags::gCreateDatabaseDDLCoordinator.isEnabledOnVersion(requestedVersion)) {
+            ShardingDDLCoordinatorService::getService(opCtx)
+                ->waitForCoordinatorsOfGivenTypeToComplete(opCtx,
+                                                           DDLCoordinatorTypeEnum::kDropDatabase);
         }
     }
 };

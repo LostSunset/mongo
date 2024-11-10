@@ -60,8 +60,8 @@
 #include "mongo/db/catalog/database_holder.h"
 #include "mongo/db/catalog/drop_collection.h"
 #include "mongo/db/catalog/index_catalog.h"
-#include "mongo/db/catalog/multi_index_block.h"
 #include "mongo/db/catalog/validate/collection_validation.h"
+#include "mongo/db/catalog/validate/validate_results.h"
 #include "mongo/db/catalog_raii.h"
 #include "mongo/db/change_stream_pre_image_util.h"
 #include "mongo/db/change_stream_serverless_helpers.h"
@@ -74,7 +74,10 @@
 #include "mongo/db/feature_compatibility_version_document_gen.h"
 #include "mongo/db/feature_compatibility_version_documentation.h"
 #include "mongo/db/index/index_constants.h"
-#include "mongo/db/index_builds_coordinator.h"
+#include "mongo/db/index_builds/index_builds_coordinator.h"
+#include "mongo/db/index_builds/multi_index_block.h"
+#include "mongo/db/index_builds/rebuild_indexes.h"
+#include "mongo/db/index_builds/resumable_index_builds_gen.h"
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/record_id_helpers.h"
@@ -83,7 +86,6 @@
 #include "mongo/db/repl/replication_coordinator.h"
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl_set_member_in_standalone_mode.h"
-#include "mongo/db/resumable_index_builds_gen.h"
 #include "mongo/db/server_feature_flags_gen.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/service_context.h"
@@ -262,7 +264,7 @@ auto downgradeError =
     Status{ErrorCodes::MustDowngrade,
            str::stream() << "UPGRADE PROBLEM: The data files need to be fully upgraded to version "
                             "4.4 before attempting a binary upgrade; see "
-                         << feature_compatibility_version_documentation::kUpgradeLink
+                         << feature_compatibility_version_documentation::upgradeLink()
                          << " for more details."};
 
 /**
@@ -557,7 +559,7 @@ void cleanupPreImagesCollectionAfterUncleanShutdown(OperationContext* opCtx,
 // The optional parameter `startupTimeElapsedBuilder` is for adding time elapsed of tasks done in
 // this function into one single builder that records the time elapsed during startup. Its default
 // value is nullptr because we only want to time this function when it is called during startup.
-void reconcileCatalogAndRestartUnfinishedIndexeBuilds(
+void reconcileCatalogAndRestartUnfinishedIndexBuilds(
     OperationContext* opCtx,
     StorageEngine* storageEngine,
     StorageEngine::LastShutdownState lastShutdownState,
@@ -824,7 +826,7 @@ void startupRecovery(OperationContext* opCtx,
     }
 
     // Drops abandoned idents. Restarts incomplete two-phase index builds.
-    reconcileCatalogAndRestartUnfinishedIndexeBuilds(
+    reconcileCatalogAndRestartUnfinishedIndexBuilds(
         opCtx, storageEngine, lastShutdownState, startupTimeElapsedBuilder);
 
     const bool usingReplication =
@@ -843,8 +845,6 @@ void startupRecovery(OperationContext* opCtx,
             ensureCollectionProperties(opCtx, dbName, EnsureIndexPolicy::kBuildMissing));
 
         if (usingReplication) {
-            // We only care about _id indexes if we are in a replset.
-            checkForIdIndexes(opCtx, dbName);
             // Ensure oplog is capped (mongodb does not guarantee order of inserts on noncapped
             // collections)
             if (dbName == DatabaseName::kLocal) {

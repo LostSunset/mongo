@@ -63,9 +63,21 @@ struct ErrorCalculationSummary {
     double qError99thPercentile;
 };
 
-static size_t calculateFrequencyFromDataVectorEq(const std::vector<stats::SBEValue>& data,
-                                                 sbe::value::TypeTags type,
-                                                 stats::SBEValue valueToCalculate);
+stats::ScalarHistogram createHistogram(const std::vector<BucketData>& data);
+
+/**
+ * Calculate the frequency of a specific SBEValue as found in a vector of SBEValues.
+ */
+size_t calculateFrequencyFromDataVectorEq(const std::vector<stats::SBEValue>& data,
+                                          sbe::value::TypeTags type,
+                                          stats::SBEValue valueToCalculate,
+                                          bool includeScalar);
+
+/**
+ * Calculate the frequency of a specific TypeTag as found in a vector of SBEValues.
+ */
+size_t calculateTypeFrequencyFromDataVectorEq(const std::vector<stats::SBEValue>& data,
+                                              sbe::value::TypeTags type);
 
 /**
  * Calculate the frequency of a range in a given vector of values.
@@ -89,6 +101,7 @@ void printResult(DataDistributionEnum dataDistribution,
                  int numberOfQueries,
                  QueryType queryType,
                  const std::pair<size_t, size_t>& dataInterval,
+                 bool includeScalar,
                  ErrorCalculationSummary error);
 
 void generateDataUniform(size_t size,
@@ -96,21 +109,24 @@ void generateDataUniform(size_t size,
                          const TypeCombination& typeCombination,
                          size_t seed,
                          size_t ndv,
-                         std::vector<stats::SBEValue>& data);
+                         std::vector<stats::SBEValue>& data,
+                         int arrayLength = 0);
 
 void generateDataNormal(size_t size,
                         const std::pair<size_t, size_t>& interval,
                         const TypeCombination& typeCombination,
                         size_t seed,
                         size_t ndv,
-                        std::vector<stats::SBEValue>& data);
+                        std::vector<stats::SBEValue>& data,
+                        int arrayLength = 0);
 
 void generateDataZipfian(size_t size,
                          const std::pair<size_t, size_t>& interval,
                          const TypeCombination& typeCombination,
                          size_t seed,
                          size_t ndv,
-                         std::vector<stats::SBEValue>& data);
+                         std::vector<stats::SBEValue>& data,
+                         int arrayLength = 0);
 
 ErrorCalculationSummary runQueries(size_t size,
                                    size_t numberOfQueries,

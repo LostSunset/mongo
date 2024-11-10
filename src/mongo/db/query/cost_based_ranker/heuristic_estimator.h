@@ -38,13 +38,15 @@ namespace mongo::cost_based_ranker {
 const SelectivityEstimate kRegexSel{SelectivityType{0.1}, EstimationSource::Heuristics};
 const SelectivityEstimate kExistsSel{SelectivityType{0.99}, EstimationSource::Heuristics};
 const SelectivityEstimate kBitsSel{SelectivityType{0.1}, EstimationSource::Heuristics};
+const SelectivityEstimate oneSelHeuristic{SelectivityType{1}, EstimationSource::Heuristics};
+const SelectivityEstimate zeroSelHeuristic{SelectivityType{0}, EstimationSource::Heuristics};
 
 /**
  * Estimate the selectivity of the given 'MatchExpression'. The expression must be a leaf, that is
  * an atomic predicate. The caller is responsible for estimating selectivies of conjunctions,
  * disjuctions and negations.
  */
-SelectivityEstimate estimateLeafMatchExpression(MatchExpression* expr,
+SelectivityEstimate estimateLeafMatchExpression(const MatchExpression* expr,
                                                 CardinalityEstimate inputCard);
 
 /**
@@ -52,5 +54,10 @@ SelectivityEstimate estimateLeafMatchExpression(MatchExpression* expr,
  * disjunctions (Intervals in an OrderedIntervalList) and conjunctions (OILs in IndexBounds).
  */
 SelectivityEstimate estimateIndexBounds(const IndexBounds& bounds, CardinalityEstimate inputCard);
+
+/**
+ * Estimate a single interval heuristically, depending on the available bounds.
+ */
+SelectivityEstimate estimateInterval(const Interval& interval, CardinalityEstimate inputCard);
 
 }  // namespace mongo::cost_based_ranker
