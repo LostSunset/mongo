@@ -141,7 +141,8 @@ private:
     ServiceContext* _serviceContext;
 };
 
-class ReshardingCoordinatorServiceTest : public ConfigServerTestFixture {
+class ReshardingCoordinatorServiceTest : service_context_test::WithSetupTransportLayer,
+                                         public ConfigServerTestFixture {
 public:
     std::unique_ptr<repl::PrimaryOnlyService> makeService(ServiceContext* serviceContext) {
         return std::make_unique<ReshardingCoordinatorServiceForTest>(serviceContext);
@@ -586,11 +587,11 @@ public:
         auto serviceCtx = opCtx->getServiceContext();
         for (ServiceContext::LockedClientsCursor cursor(serviceCtx);
              Client* client = cursor.next();) {
-            ClientLock lk(client);
-            if (client->isFromSystemConnection() && !client->canKillSystemOperationInStepdown(lk)) {
+            if (!client->canKillOperationInStepdown()) {
                 continue;
             }
 
+            ClientLock lk(client);
             OperationContext* toKill = client->getOperationContext();
 
             if (toKill && !toKill->isKillPending() && toKill->getOpID() != opCtx->getOpID()) {

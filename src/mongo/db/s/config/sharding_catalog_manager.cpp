@@ -875,7 +875,7 @@ BSONObj createConfigSettingsValidator() {
     // states, as the validator is installed during FCV upgrade.
     auto fcvSnapshot = serverGlobalParams.featureCompatibility.acquireFCVSnapshot();
     auto targetVersion = fcvSnapshot.isUpgradingOrDowngrading()
-        ? getTransitionFCVFromAndTo(fcvSnapshot.getVersion()).second
+        ? getTransitionFCVInfo(fcvSnapshot.getVersion()).to
         : fcvSnapshot.getVersion();
 
     if (feature_flags::gBalancerSettingsSchema.isEnabledOnVersion(targetVersion)) {
@@ -1036,14 +1036,13 @@ Status ShardingCatalogManager::_notifyClusterOnNewDatabases(
     try {
         // Setup an AlternativeClientRegion and a non-interruptible Operation Context to ensure that
         // the notification may be also sent out while the node is stepping down.
+        //
+        // TODO(SERVER-74658): Please revisit if this thread could be made killable.
         auto altClient = opCtx->getServiceContext()
                              ->getService(ClusterRole::ShardServer)
-                             ->makeClient("_notifyClusterOnNewDatabases");
-        // TODO(SERVER-74658): Please revisit if this thread could be made killable.
-        {
-            mongo::stdx::lock_guard<mongo::Client> lk(*altClient.get());
-            altClient.get()->setSystemOperationUnkillableByStepdown(lk);
-        }
+                             ->makeClient("_notifyClusterOnNewDatabases",
+                                          Client::noSession(),
+                                          ClientOperationKillableByStepdown{false});
         AlternativeClientRegion acr(altClient);
         auto altOpCtxHolder = cc().makeOperationContext();
         auto altOpCtx = altOpCtxHolder.get();
@@ -1553,14 +1552,13 @@ void ShardingCatalogManager::initializePlacementHistory(OperationContext* opCtx)
     // (This operation includes a $merge stage writing into the config database, which requires
     // internal client credentials).
     {
+        // TODO(SERVER-74658): Please revisit if this thread could be made killable.
         auto altClient = opCtx->getServiceContext()
                              ->getService(ClusterRole::ShardServer)
-                             ->makeClient("initializePlacementHistory");
-        // TODO(SERVER-74658): Please revisit if this thread could be made killable.
-        {
-            stdx::lock_guard<Client> lk(*altClient.get());
-            altClient.get()->setSystemOperationUnkillableByStepdown(lk);
-        }
+                             ->makeClient("initializePlacementHistory",
+                                          Client::noSession(),
+                                          ClientOperationKillableByStepdown{false});
+
         AuthorizationSession::get(altClient.get())->grantInternalAuthorization();
         AlternativeClientRegion acr(altClient);
         auto executor =

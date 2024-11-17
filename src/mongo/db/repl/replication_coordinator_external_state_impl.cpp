@@ -189,13 +189,10 @@ auto makeThreadPool(const std::string& poolName, const std::string& threadName) 
     threadPoolOptions.threadNamePrefix = threadName + "-";
     threadPoolOptions.poolName = poolName;
     threadPoolOptions.onCreateThread = [](const std::string& threadName) {
-        Client::initThread(threadName.c_str(),
-                           getGlobalServiceContext()->getService(ClusterRole::ShardServer));
-
-        {
-            stdx::lock_guard<Client> lk(cc());
-            cc().setSystemOperationUnkillableByStepdown(lk);
-        }
+        Client::initThread(threadName,
+                           getGlobalServiceContext()->getService(ClusterRole::ShardServer),
+                           Client::noSession(),
+                           ClientOperationKillableByStepdown{false});
 
         AuthorizationSession::get(cc())->grantInternalAuthorization();
     };
@@ -1147,8 +1144,10 @@ void ReplicationCoordinatorExternalStateImpl::_shardingOnTransitionToPrimaryHook
         // The code above will only be executed after a stepdown happens, however the code below
         // needs to be executed also on startup, and the enabled check might fail in shards during
         // startup. Create uuid index on config.rangeDeletions if needed
-        auto minKeyFieldName = RangeDeletionTask::kRangeFieldName + "." + ChunkRange::kMinKey;
-        auto maxKeyFieldName = RangeDeletionTask::kRangeFieldName + "." + ChunkRange::kMaxKey;
+        const auto minKeyFieldName =
+            RangeDeletionTask::kRangeFieldName + "." + ChunkRange::kMinFieldName;
+        const auto maxKeyFieldName =
+            RangeDeletionTask::kRangeFieldName + "." + ChunkRange::kMaxFieldName;
         Status indexStatus = createIndexOnConfigCollection(
             opCtx,
             NamespaceString::kRangeDeletionNamespace,

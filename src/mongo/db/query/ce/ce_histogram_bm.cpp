@@ -37,10 +37,6 @@ namespace mongo::ce {
 
 enum DataType { kInt, kStringSmall, kString, kDouble };
 
-using mongo::stats::TypeCounts;
-using TypeProbability = std::pair<sbe::value::TypeTags, size_t>;
-using TypeCombination = std::vector<TypeProbability>;
-
 struct HistogramEstimationBenchmarkConfiguration {
     int numberOfBuckets;
     size_t size;

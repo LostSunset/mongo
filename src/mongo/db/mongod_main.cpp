@@ -140,6 +140,7 @@
 #include "mongo/db/query/client_cursor/clientcursor.h"
 #include "mongo/db/query/query_knobs_gen.h"
 #include "mongo/db/query/query_settings/query_settings_manager.h"
+#include "mongo/db/query/search/search_task_executors.h"
 #include "mongo/db/query/stats/stats_cache_loader_impl.h"
 #include "mongo/db/query/stats/stats_catalog.h"
 #include "mongo/db/read_write_concern_defaults.h"
@@ -160,7 +161,6 @@
 #include "mongo/db/repl/replication_recovery.h"
 #include "mongo/db/repl/storage_interface.h"
 #include "mongo/db/repl/storage_interface_impl.h"
-#include "mongo/db/repl/tenant_migration_util.h"
 #include "mongo/db/repl/topology_coordinator.h"
 #include "mongo/db/repl/wait_for_majority_service.h"
 #include "mongo/db/repl_set_member_in_standalone_mode.h"
@@ -328,8 +328,25 @@ auto makeTransportLayer(ServiceContext* svcCtx) {
         // TODO SERVER-78730: add support for load-balanced connections.
     }
 
+    // Mongod should not bind to any ports in repair mode so only allow egress.
+    if (storageGlobalParams.repair) {
+        return transport::TransportLayerManagerImpl::makeDefaultEgressTransportLayer();
+    }
+
     return transport::TransportLayerManagerImpl::createWithConfig(
         &serverGlobalParams, svcCtx, std::move(loadBalancerPort), std::move(routerPort));
+}
+
+ExitCode initializeTransportLayer(ServiceContext* serviceContext, BSONObjBuilder* timerReport) {
+    TimeElapsedBuilderScopedTimer scopedTimer(
+        serviceContext->getFastClockSource(), "Transport layer setup", timerReport);
+    auto tl = makeTransportLayer(serviceContext);
+    if (auto res = tl->setup(); !res.isOK()) {
+        LOGV2_ERROR(20568, "Error setting up transport layer", "error"_attr = res);
+        return ExitCode::netError;
+    }
+    serviceContext->setTransportLayerManager(std::move(tl));
+    return ExitCode::clean;
 }
 
 void logStartup(OperationContext* opCtx) {
@@ -470,13 +487,11 @@ void logMongodStartupTimeElapsedStatistics(ServiceContext* serviceContext,
 // of the initialization steps within.  If you add or change any of these steps, make sure
 // any necessary changes are also made to File Copy Based Initial Sync.
 ExitCode _initAndListen(ServiceContext* serviceContext) {
-    Client::initThread("initandlisten", serviceContext->getService(ClusterRole::ShardServer));
-
     // TODO(SERVER-74659): Please revisit if this thread could be made killable.
-    {
-        stdx::lock_guard<Client> lk(cc());
-        cc().setSystemOperationUnkillableByStepdown(lk);
-    }
+    Client::initThread("initandlisten",
+                       serviceContext->getService(ClusterRole::ShardServer),
+                       Client::noSession(),
+                       ClientOperationKillableByStepdown{false});
 
     BSONObjBuilder startupTimeElapsedBuilder;
     BSONObjBuilder startupInfoBuilder;
@@ -558,17 +573,9 @@ ExitCode _initAndListen(ServiceContext* serviceContext) {
     CertificateExpirationMonitor::get()->start(serviceContext);
 #endif
 
-    if (!storageGlobalParams.repair) {
-        TimeElapsedBuilderScopedTimer scopedTimer(serviceContext->getFastClockSource(),
-                                                  "Transport layer setup",
-                                                  &startupTimeElapsedBuilder);
-        auto tl = makeTransportLayer(serviceContext);
-        if (auto res = tl->setup(); !res.isOK()) {
-            LOGV2_ERROR(20568, "Error setting up listener", "error"_attr = res);
-            return ExitCode::netError;
-        }
-        serviceContext->setTransportLayerManager(std::move(tl));
-    }
+    if (auto ec = initializeTransportLayer(serviceContext, &startupTimeElapsedBuilder);
+        ec != ExitCode::clean)
+        return ec;
 
     FlowControl::set(serviceContext,
                      std::make_unique<FlowControl>(
@@ -1005,7 +1012,6 @@ ExitCode _initAndListen(ServiceContext* serviceContext) {
                                                       &startupTimeElapsedBuilder);
             Lock::GlobalWrite lk(startupOpCtx.get());
             OldClientContext ctx(startupOpCtx.get(), NamespaceString::kRsOplogNamespace);
-            tenant_migration_util::createOplogViewForTenantMigrations(startupOpCtx.get(), ctx.db());
         }
 
         storageEngine->startTimestampMonitor();
@@ -1145,9 +1151,11 @@ ExitCode _initAndListen(ServiceContext* serviceContext) {
     // operation context anymore
     startupOpCtx.reset();
 
+    executor::startupSearchExecutorsIfNeeded(serviceContext);
+
     transport::ServiceExecutor::startupAll(serviceContext);
 
-    if (!storageGlobalParams.repair) {
+    {
         TimeElapsedBuilderScopedTimer scopedTimer(serviceContext->getFastClockSource(),
                                                   "Start transport layer",
                                                   &startupTimeElapsedBuilder);
@@ -1360,11 +1368,10 @@ auto makeReplicaSetNodeExecutor(ServiceContext* serviceContext) {
     tpOptions.poolName = "ReplNodeDbWorkerThreadPool";
     tpOptions.maxThreads = ThreadPool::Options::kUnlimited;
     tpOptions.onCreateThread = [serviceContext](const std::string& threadName) {
-        Client::initThread(threadName.c_str(),
-                           serviceContext->getService(ClusterRole::ShardServer));
-
-        stdx::lock_guard<Client> lk(cc());
-        cc().setSystemOperationUnkillableByStepdown(lk);
+        Client::initThread(threadName,
+                           serviceContext->getService(ClusterRole::ShardServer),
+                           Client::noSession(),
+                           ClientOperationKillableByStepdown{false});
     };
     return executor::ThreadPoolTaskExecutor::create(
         std::make_unique<ThreadPool>(tpOptions),
@@ -1378,11 +1385,10 @@ auto makeReplicationExecutor(ServiceContext* serviceContext) {
     tpOptions.poolName = "ReplCoordThreadPool";
     tpOptions.maxThreads = 50;
     tpOptions.onCreateThread = [serviceContext](const std::string& threadName) {
-        Client::initThread(threadName.c_str(),
-                           serviceContext->getService(ClusterRole::ShardServer));
-
-        stdx::lock_guard<Client> lk(cc());
-        cc().setSystemOperationUnkillableByStepdown(lk);
+        Client::initThread(threadName,
+                           serviceContext->getService(ClusterRole::ShardServer),
+                           Client::noSession(),
+                           ClientOperationKillableByStepdown{false});
     };
     auto hookList = std::make_unique<rpc::EgressMetadataHookList>();
     hookList->addHook(std::make_unique<rpc::VectorClockMetadataHook>(serviceContext));
@@ -1620,13 +1626,12 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
     if (Client::getCurrent()) {
         oldClient = Client::releaseCurrent();
     }
-    Client::setCurrent(
-        serviceContext->getService(ClusterRole::ShardServer)->makeClient("shutdownTask"));
+    Client::setCurrent(serviceContext->getService(ClusterRole::ShardServer)
+                           ->makeClient("shutdownTask",
+                                        Client::noSession(),
+                                        ClientOperationKillableByStepdown{false}));
     const auto client = Client::getCurrent();
-    {
-        stdx::lock_guard<Client> lk(*client);
-        client->setSystemOperationUnkillableByStepdown(lk);
-    }
+
     // The new client and opCtx are stashed in the ServiceContext, will survive past this
     // function and are never destructed. This is required to avoid releasing the global lock until
     // the process calls exit().
@@ -1905,18 +1910,6 @@ void shutdownTask(const ShutdownTaskArgs& shutdownArgs) {
         LOGV2_OPTIONS(
             4784920, {LogComponent::kReplication}, "Shutting down the LogicalTimeValidator");
         validator->shutDown();
-    }
-
-    // The migrationutil executor must be shut down before shutting down the CatalogCache and the
-    // ExecutorPool. Otherwise, it may try to schedule work on those components and fail.
-    LOGV2_OPTIONS(4784921, {LogComponent::kSharding}, "Shutting down the MigrationUtilExecutor");
-    auto migrationUtilExecutor = migrationutil::getMigrationUtilExecutor(serviceContext);
-    {
-        TimeElapsedBuilderScopedTimer scopedTimer(serviceContext->getFastClockSource(),
-                                                  "Shut down the migration util executor",
-                                                  &shutdownTimeElapsedBuilder);
-        migrationUtilExecutor->shutdown();
-        migrationUtilExecutor->join();
     }
 
     if (TestingProctor::instance().isEnabled()) {

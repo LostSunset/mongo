@@ -67,7 +67,6 @@
 #include "mongo/db/repl/oplog.h"
 #include "mongo/db/repl/repl_client_info.h"
 #include "mongo/db/repl/replication_coordinator.h"
-#include "mongo/db/repl/tenant_migration_decoration.h"
 #include "mongo/db/server_options.h"
 #include "mongo/db/storage/storage_parameters_gen.h"
 #include "mongo/db/storage/write_unit_of_work.h"
@@ -284,7 +283,7 @@ boost::optional<std::pair<BSONObj, BSONObj>> processTimeseriesMeasurements(
     const boost::optional<TimeseriesOptions>& options = boost::none,
     const boost::optional<const StringDataComparator*>& comparator = boost::none,
     const boost::optional<Date_t> currentMinTime = boost::none) {
-    TrackingContext trackingContext;
+    tracking::Context trackingContext;
     bucket_catalog::MinMax minmax{trackingContext};
     bool computeMinmax = options && comparator;
 
@@ -466,8 +465,6 @@ write_ops::UpdateOpEntry makeTimeseriesCompressedDiffEntry(
     }
 
     write_ops::UpdateModification::DiffOptions options;
-    options.mustCheckExistenceForInsertOperations =
-        static_cast<bool>(repl::tenantMigrationInfo(opCtx));
     write_ops::UpdateModification u(
         updateBuilder.obj(), write_ops::UpdateModification::DeltaTag{}, options);
     u.verifierFunction = std::move(verifierFunction);
@@ -534,8 +531,6 @@ write_ops::UpdateOpEntry makeTimeseriesUpdateOpEntry(
         }
     }
     write_ops::UpdateModification::DiffOptions options;
-    options.mustCheckExistenceForInsertOperations =
-        static_cast<bool>(repl::tenantMigrationInfo(opCtx));
     write_ops::UpdateModification u(
         updateBuilder.obj(), write_ops::UpdateModification::DeltaTag{}, options);
     auto oid = batch->bucketId.oid;
@@ -573,10 +568,8 @@ void updateTimeseriesDocument(OperationContext* opCtx,
         collection_internal::kUpdateAllIndexes;  // Assume all indexes are affected.
     if (update.getU().type() == write_ops::UpdateModification::Type::kDelta) {
         diffFromUpdate = update.getU().getDiff();
-        updated = doc_diff::applyDiff(original.value(),
-                                      diffFromUpdate,
-                                      static_cast<bool>(repl::tenantMigrationInfo(opCtx)),
-                                      update.getU().verifierFunction);
+        updated = doc_diff::applyDiff(
+            original.value(), diffFromUpdate, false, update.getU().verifierFunction);
         diffOnIndexes = &diffFromUpdate;
         args.update = update_oplog_entry::makeDeltaOplogEntry(diffFromUpdate);
     } else if (update.getU().type() == write_ops::UpdateModification::Type::kTransform) {
@@ -770,7 +763,7 @@ BSONObj makeTimeseriesInsertCompressedBucketDocument(
     std::shared_ptr<bucket_catalog::WriteBatch> batch,
     const BSONObj& metadata,
     const std::vector<
-        std::pair<StringData, BSONColumnBuilder<TrackingAllocator<void>>::BinaryDiff>>&
+        std::pair<StringData, BSONColumnBuilder<tracking::Allocator<void>>::BinaryDiff>>&
         intermediates) {
     BSONObjBuilder insertBuilder;
     insertBuilder.append(kBucketIdFieldName, batch->bucketId.oid);
@@ -860,7 +853,7 @@ void assertTimeseriesBucketsCollection(const Collection* bucketsColl) {
 }
 
 BSONObj makeBSONColumnDocDiff(
-    const BSONColumnBuilder<TrackingAllocator<void>>::BinaryDiff& binaryDiff) {
+    const BSONColumnBuilder<tracking::Allocator<void>>::BinaryDiff& binaryDiff) {
     return BSON(
         "o" << binaryDiff.offset() << "d"
             << BSONBinData(binaryDiff.data(), binaryDiff.size(), BinDataType::BinDataGeneral));
@@ -917,7 +910,7 @@ BSONObj makeBucketDocument(const std::vector<BSONObj>& measurements,
                            const UUID& collectionUUID,
                            const TimeseriesOptions& options,
                            const StringDataComparator* comparator) {
-    TrackingContext trackingContext;
+    tracking::Context trackingContext;
     auto res = uassertStatusOK(bucket_catalog::internal::extractBucketingParameters(
         trackingContext, collectionUUID, comparator, options, measurements[0]));
     auto time = res.second;

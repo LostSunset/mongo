@@ -1776,13 +1776,15 @@ void ExecCommandDatabase::_initiateCommand() {
         }
     }
 
+    const auto isProcessInternalCommand = isProcessInternalClient(*opCtx->getClient());
+
     if (gIngressAdmissionControlEnabled.load()) {
         // The way ingress admission works, one ticket should cover all the work for the operation.
         // Therefore, if the operation has already been admitted by IngressAdmissionController, all
         // of the subsequent admissions of the same operation (e.g. via DBDirectClient) should be
         // exempt from ingress admission control.
         boost::optional<ScopedAdmissionPriority<IngressAdmissionContext>> admissionPriority;
-        if (!_invocation->isSubjectToIngressAdmissionControl() ||
+        if (isProcessInternalCommand || !_invocation->isSubjectToIngressAdmissionControl() ||
             IngressAdmissionContext::get(opCtx).isHoldingTicket()) {
             admissionPriority.emplace(opCtx, AdmissionContext::Priority::kExempt);
         }
@@ -2390,13 +2392,11 @@ void HandleRequest::completeOperation(DbResponse& response) {
         executionContext.slowMsOverride,
         executionContext.forceLog);
 
-    Top::get(opCtx->getServiceContext())
-        .incrementGlobalLatencyStats(
-            opCtx,
-            durationCount<Microseconds>(currentOp.elapsedTimeExcludingPauses()),
-            durationCount<Microseconds>(
-                duration_cast<Microseconds>(currentOp.debug().workingTimeMillis)),
-            currentOp.getReadWriteType());
+    ServiceLatencyTracker::getDecoration(opCtx->getService())
+        .increment(opCtx,
+                   currentOp.elapsedTimeExcludingPauses(),
+                   currentOp.debug().workingTimeMillis,
+                   currentOp.getReadWriteType());
 
     if (shouldProfile) {
         // Performance profiling is on

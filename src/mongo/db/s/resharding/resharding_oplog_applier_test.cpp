@@ -163,7 +163,8 @@ private:
     bool _doThrow{false};
 };
 
-class ReshardingOplogApplierTest : public ShardingMongoDTestFixture {
+class ReshardingOplogApplierTest : service_context_test::WithSetupTransportLayer,
+                                   public ShardingMongoDTestFixture {
 public:
     const HostAndPort kConfigHostAndPort{"DummyConfig", 12345};
     const std::string kOriginalShardKey = "sk";
@@ -435,7 +436,7 @@ protected:
         threadPoolOptions.threadNamePrefix = "TestReshardOplogApplication-";
         threadPoolOptions.poolName = "TestReshardOplogApplicationThreadPool";
         threadPoolOptions.onCreateThread = [](const std::string& threadName) {
-            Client::initThread(threadName.c_str(), getGlobalServiceContext()->getService());
+            Client::initThread(threadName, getGlobalServiceContext()->getService());
             auto* client = Client::getCurrent();
             AuthorizationSession::get(*client)->grantInternalAuthorization();
         };

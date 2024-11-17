@@ -24,9 +24,11 @@ env.SConscript(
         "query_settings",
         "query_stats",
         "query_shape",
+        "querytester",
         "search",
         "stage_builder/sbe",
         "stats",
+        "virtual_collection",
         "write_ops",
     ],
     exports=[
@@ -42,21 +44,6 @@ env.Library(
     LIBDEPS=[
         "$BUILD_DIR/mongo/base",
         "datetime/date_time_support",
-    ],
-)
-
-env.Library(
-    target="query_test_service_context",
-    source=[
-        "query_test_service_context.cpp",
-    ],
-    LIBDEPS=[
-        "$BUILD_DIR/mongo/db/service_context_test_fixture",
-        "collation/collator_factory_mock",
-    ],
-    LIBDEPS_PRIVATE=[
-        "$BUILD_DIR/mongo/db/concurrency/lock_manager",
-        "$BUILD_DIR/mongo/s/grid",
     ],
 )
 
