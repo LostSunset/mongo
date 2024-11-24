@@ -49,7 +49,6 @@ env.SConscript(
         "query",
         "repl",
         "s",
-        "serverless",
         "session",
         "sorter",
         "stats",
@@ -172,6 +171,7 @@ env.CppUnitTest(
         "service_context",
         "service_context_test_fixture",
     ],
+    PROVE_ALIASES=["server-programmability"],
 )
 
 env.CppUnitTest(
@@ -195,6 +195,7 @@ env.CppUnitTest(
         "client_out_of_line_executor",
         "concurrency/lock_manager",
     ],
+    PROVE_ALIASES=["server-programmability"],
 )
 
 env.CppUnitTest(
@@ -208,6 +209,7 @@ env.CppUnitTest(
         "mongod_options",
         "server_base",
     ],
+    PROVE_ALIASES=["server-programmability"],
 )
 
 env.CppUnitTest(
@@ -506,6 +508,7 @@ if wiredtiger:
             "shard_role",
             "stats/counters",
         ],
+        PROVE_ALIASES=["server-programmability"],
     )
 
     envWithAsio.CppUnitTest(
@@ -715,35 +718,16 @@ env.Benchmark(
     ],
 )
 
-env.Library(
-    target="service_entry_point_test_fixture",
-    source=[
-        "service_entry_point_test_fixture.cpp",
-    ],
-    LIBDEPS=[
-        "$BUILD_DIR/mongo/util/clock_source_mock",
-        "read_write_concern_defaults_mock",
-        "service_context_test_fixture",
-    ],
-)
-
 env.CppUnitTest(
     target="service_entry_point_shard_role_test",
     source=[
         "service_entry_point_shard_role_test.cpp",
     ],
     LIBDEPS=[
-        "$BUILD_DIR/mongo/rpc/client_metadata",
-        "$BUILD_DIR/mongo/transport/message_compressor",
-        "$BUILD_DIR/mongo/transport/transport_layer_mock",
-        "auth/authserver",
-        "repl/hello_command",
-        "repl/replmocks",
+        "$BUILD_DIR/mongo/transport/service_entry_point_test_fixture",
         "service_context_d",
-        "service_entry_point_test_fixture",
-        "storage/wiredtiger/storage_wiredtiger",
-        "vector_clock_mongod",
     ],
+    PROVE_ALIASES=["server-programmability"],
 )
 
 env.Benchmark(

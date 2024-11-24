@@ -744,6 +744,31 @@ add_option(
     help="Name a toolchain root for use with toolchain selection Variables files in etc/scons",
 )
 
+if mongo_toolchain_execroot:
+    bin_dir = os.path.join(mongo_toolchain_execroot, "external/mongo_toolchain/v4/bin")
+    gcc_path = os.path.dirname(
+        os.path.realpath(os.path.join(bin_dir, os.readlink(os.path.join(bin_dir, "g++"))))
+    )
+    clang_path = os.path.dirname(
+        os.path.realpath(os.path.join(bin_dir, os.readlink(os.path.join(bin_dir, "clang++"))))
+    )
+else:
+    gcc_path = ""
+    clang_path = ""
+
+add_option(
+    "bazel-toolchain-clang",
+    default=clang_path,
+    help="used in Variables files to help find the real bazel toolchain location.",
+)
+
+add_option(
+    "bazel-toolchain-gcc",
+    default=gcc_path,
+    help="used in Variables files to help find the real bazel toolchain location.",
+)
+
+
 add_option(
     "msvc-debugging-format",
     choices=["codeview", "pdb"],
@@ -3921,6 +3946,10 @@ def doConfigure(myenv):
             myenv.Append(CXXFLAGS=["-Wnon-virtual-dtor"])
         conf.Finish()
 
+        # TODO(SERVER-97447): Remove this once we're fully on the v5 toolchain. In the meantime, we
+        # need to suppress some warnings that are only recognized by the new compilers.
+        myenv.AddToCXXFLAGSIfSupported("-Wno-unknown-warning-option")
+
         # As of XCode 9, this flag must be present (it is not enabled
         # by -Wall), in order to enforce that -mXXX-version-min=YYY
         # will enforce that you don't use APIs from ZZZ.
@@ -6615,9 +6644,8 @@ elif env.GetOption("build-mongot"):
 
 # __NINJA_NO is ninja callback to scons signal, in that case we care about
 # scons only targets not thin targets.
-if env.get("__NINJA_NO") != "1":
-    env.Tool("integrate_bazel")
-else:
+env.Tool("integrate_bazel")
+if env.get("__NINJA_NO") == "1":
     env.LoadBazelBuilders()
 
     def noop(*args, **kwargs):

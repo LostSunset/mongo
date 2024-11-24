@@ -2,12 +2,12 @@
 BUILD files in the "src/" subtree.
 """
 
+load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
+load("@com_github_grpc_grpc//bazel:generate_cc.bzl", "generate_cc")
+load("@com_github_grpc_grpc//bazel:protobuf.bzl", "well_known_proto_libs")
 load("@poetry//:dependencies.bzl", "dependency")
 load("@rules_cc//cc:defs.bzl", "cc_binary", "cc_library")
 load("@rules_proto//proto:defs.bzl", "proto_library")
-load("@com_github_grpc_grpc//bazel:generate_cc.bzl", "generate_cc")
-load("@com_github_grpc_grpc//bazel:protobuf.bzl", "well_known_proto_libs")
-load("@bazel_tools//tools/cpp:toolchain_utils.bzl", "find_cpp_toolchain")
 load(
     "//bazel:header_deps.bzl",
     "HEADER_DEP_SUFFIX",
@@ -489,6 +489,11 @@ GCC_OR_CLANG_WARNINGS_COPTS = select({
         # SERVER-76472 we don't try to maintain ABI so disable warnings about
         # possible ABI issues.
         "-Wno-psabi",
+
+        # TODO(SERVER-97447): Remove this once we're fully on the v5 toolchain.
+        # In the meantime, we need to suppress some warnings that are only
+        # recognized by the new compilers.
+        "-Wno-unknown-warning-option",
     ],
     "//conditions:default": [],
 })
@@ -614,6 +619,9 @@ GCC_OR_CLANG_GENERAL_COPTS = select({
 
         # Disable TBAA optimization
         "-fno-strict-aliasing",
+
+        # Show colors even though bazel captures stdout/stderr
+        "-fdiagnostics-color",
     ],
     "//conditions:default": [],
 })
@@ -1487,12 +1495,12 @@ def mongo_cc_library(
             "//conditions:default": {},
         })
 
-    if "compile_requires_large_memory_fsan" in tags:
+    if "compile_requires_large_memory_sanitizer" in tags:
         exec_properties |= select({
-            "//bazel/config:fsan_enabled_x86_64": {
+            "//bazel/config:any_sanitizer_x86_64": {
                 "Pool": "large_mem_x86_64",
             },
-            "//bazel/config:fsan_enabled_aarch64": {
+            "//bazel/config:any_sanitizer_aarch64": {
                 "Pool": "large_memory_arm64",
             },
             "//conditions:default": {},

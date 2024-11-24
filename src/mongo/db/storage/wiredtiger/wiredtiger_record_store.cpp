@@ -47,6 +47,7 @@
 #include "mongo/bson/util/builder_fwd.h"
 #include "mongo/db/catalog/health_log_gen.h"
 #include "mongo/db/catalog/health_log_interface.h"
+#include "mongo/db/catalog/validate/validate_options.h"
 #include "mongo/db/catalog/validate/validate_results.h"
 #include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/operation_context.h"
@@ -568,7 +569,7 @@ int64_t WiredTigerRecordStore::freeStorageSize(RecoveryUnit& ru) const {
 void WiredTigerRecordStore::_updateLargestRecordId(OperationContext* opCtx, long long largestSeen) {
     invariant(_keyFormat == KeyFormat::Long);
 
-    // Make sure to inialize first; otherwise the compareAndSwap can succeed trivially.
+    // Make sure to initialize first; otherwise the compareAndSwap can succeed trivially.
     _initNextIdIfNeeded(opCtx);
 
     // Since the 'largestSeen' is the largest we've seen, we need to set the _nextIdNum to one
@@ -902,8 +903,7 @@ StatusWith<RecordData> WiredTigerRecordStore::_updateWithDamages(OperationContex
     return RecordData(static_cast<const char*>(value.data), value.size).getOwned();
 }
 
-void WiredTigerRecordStore::printRecordMetadata(OperationContext* opCtx,
-                                                const RecordId& recordId,
+void WiredTigerRecordStore::printRecordMetadata(const RecordId& recordId,
                                                 std::set<Timestamp>* recordTimestamps) const {
     // Printing the record metadata requires a new session. We cannot open other cursors when there
     // are open history store cursors in the session.
@@ -1093,7 +1093,9 @@ StatusWith<int64_t> WiredTigerRecordStore::_compact(OperationContext* opCtx,
     return options.dryRun ? WiredTigerUtil::getIdentCompactRewrittenExpectedSize(s, uri) : 0;
 }
 
-void WiredTigerRecordStore::validate(RecoveryUnit& ru, bool full, ValidateResults* results) {
+void WiredTigerRecordStore::validate(RecoveryUnit& ru,
+                                     const CollectionValidation::ValidationOptions& options,
+                                     ValidateResults* results) {
     if (_isEphemeral) {
         return;
     }
@@ -1101,12 +1103,15 @@ void WiredTigerRecordStore::validate(RecoveryUnit& ru, bool full, ValidateResult
     WiredTigerUtil::validateTableLogging(
         WiredTigerRecoveryUnit::get(ru), _uri, _isLogged, boost::none, *results);
 
-    if (!full) {
+    if (!options.isFullValidation()) {
+        invariant(!options.verifyConfigurationOverride().has_value());
         return;
     }
 
-    int err = WiredTigerUtil::verifyTable(
-        WiredTigerRecoveryUnit::get(ru), _uri, results->getErrorsUnsafe());
+    int err = WiredTigerUtil::verifyTable(WiredTigerRecoveryUnit::get(ru),
+                                          _uri,
+                                          options.verifyConfigurationOverride(),
+                                          results->getErrorsUnsafe());
     if (!err) {
         return;
     }
@@ -1533,20 +1538,6 @@ WiredTigerRecordStore::Oplog::~Oplog() {
     if (_oplog->getTruncateMarkers()) {
         _oplog->getTruncateMarkers()->kill();
     }
-    // Delete oplog visibility manager on KV engine.
-    _kvEngine->haltOplogManager(this, /*shuttingDown=*/false);
-}
-
-void WiredTigerRecordStore::Oplog::postConstructorInit(OperationContext* opCtx) {
-    // If the server was started in read-only mode or if we are restoring the node, skip
-    // calculating the oplog truncate markers. The OplogCapMaintainerThread does not get started
-    // in this instance.
-    if (opCtx->getServiceContext()->userWritesAllowed() && !storageGlobalParams.repair &&
-        !storageGlobalParams.restore && !storageGlobalParams.magicRestore) {
-        _oplog->setTruncateMarkers(
-            WiredTigerOplogTruncateMarkers::createOplogTruncateMarkers(opCtx, this));
-    }
-    _kvEngine->startOplogManager(opCtx, this);
 }
 
 std::unique_ptr<SeekableRecordCursor> WiredTigerRecordStore::Oplog::getCursor(
@@ -1554,7 +1545,9 @@ std::unique_ptr<SeekableRecordCursor> WiredTigerRecordStore::Oplog::getCursor(
     return std::make_unique<WiredTigerOplogCursor>(opCtx, *this, forward);
 }
 
-void WiredTigerRecordStore::Oplog::validate(RecoveryUnit& ru, bool full, ValidateResults* results) {
+void WiredTigerRecordStore::Oplog::validate(RecoveryUnit& ru,
+                                            const CollectionValidation::ValidationOptions& options,
+                                            ValidateResults* results) {
     if (_isEphemeral) {
         return;
     }
@@ -1562,7 +1555,8 @@ void WiredTigerRecordStore::Oplog::validate(RecoveryUnit& ru, bool full, Validat
     WiredTigerUtil::validateTableLogging(
         WiredTigerRecoveryUnit::get(ru), getURI(), _isLogged, boost::none, *results);
 
-    if (!full) {
+    if (!options.isFullValidation()) {
+        invariant(!options.verifyConfigurationOverride().has_value());
         return;
     }
 
@@ -1633,6 +1627,11 @@ StatusWith<Timestamp> WiredTigerRecordStore::Oplog::getEarliestTimestamp(Recover
 int64_t WiredTigerRecordStore::Oplog::getMaxSize() const {
     // TODO make TruncateMarkers depend on OplogData (not RecrodStore), then move this method.
     return _oplog->getMaxSize();
+}
+
+void WiredTigerRecordStore::Oplog::setTruncateMarkers(
+    std::shared_ptr<WiredTigerOplogTruncateMarkers> markers) {
+    _oplog->setTruncateMarkers(markers);
 }
 
 Status WiredTigerRecordStore::Oplog::_insertRecords(OperationContext* opCtx,
@@ -1754,10 +1753,6 @@ Status WiredTigerRecordStore::Oplog::_truncate(OperationContext* opCtx) {
 
     return Status::OK();
 }
-
-WiredTigerOplogTruncateMarkers* WiredTigerRecordStore::Oplog::truncateMarkers() const {
-    return _oplog->getTruncateMarkers().get();
-};
 
 WiredTigerRecordStoreCursor::WiredTigerRecordStoreCursor(OperationContext* opCtx,
                                                          const WiredTigerRecordStore& rs,

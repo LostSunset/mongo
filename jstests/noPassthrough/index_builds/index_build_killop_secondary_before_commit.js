@@ -6,6 +6,7 @@
  * @tags: [
  *   requires_fcv_71,
  *   requires_replication,
+ *   incompatible_with_windows_tls,
  * ]
  */
 import {configureFailPoint} from "jstests/libs/fail_point_util.js";
@@ -13,6 +14,9 @@ import {ReplSetTest} from "jstests/libs/replsettest.js";
 import {IndexBuildTest} from "jstests/noPassthrough/libs/index_build.js";
 
 TestData.skipEnforceFastCountOnValidate = true;
+// Because this test intentionally crashes the server via an fassert, we need to instruct the
+// shell to clean up the core dump that is left behind.
+TestData.cleanUpCoreDumpsFromExpectedCrash = true;
 
 function killopIndexBuildOnSecondaryOnFailpoint(rst, failpointName, shouldSucceed) {
     const primary = rst.getPrimary();

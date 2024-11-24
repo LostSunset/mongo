@@ -1063,6 +1063,8 @@ void ReplicationCoordinatorImpl::_startDataReplication(OperationContext* opCtx) 
 void ReplicationCoordinatorImpl::startup(OperationContext* opCtx,
                                          StorageEngine::LastShutdownState lastShutdownState) {
     if (!_settings.isReplSet()) {
+        // We do not need to check for magic restore since magic restore always runs in a replica
+        // set.
         if (ReplSettings::shouldRecoverFromOplogAsStandalone()) {
             uassert(ErrorCodes::InvalidOptions,
                     str::stream() << "Cannot set parameter 'recoverToOplogTimestamp' "
@@ -1285,20 +1287,6 @@ void ReplicationCoordinatorImpl::shutdown(OperationContext* opCtx,
         }
         initialSyncerCopy->join();
         initialSyncerCopy.reset();
-    }
-
-    {
-        stdx::unique_lock<stdx::mutex> lk(_mutex);
-        if (_finishedDrainingPromise) {
-            auto scopedTimer = createTimeElapsedBuilderScopedTimer(
-                opCtx->getServiceContext()->getFastClockSource(),
-                "Cancel wait for drain mode",
-                shutdownTimeElapsedBuilder);
-            _finishedDrainingPromise->setError(
-                {ErrorCodes::InterruptedAtShutdown,
-                 "Cancelling wait for drain mode to complete due to shutdown"});
-            _finishedDrainingPromise = boost::none;
-        }
     }
 
     {
@@ -2079,11 +2067,7 @@ Status ReplicationCoordinatorImpl::waitUntilMajorityOpTime(mongo::OperationConte
                 1,
                 "waitUntilOpTime: waiting for target OpTime to be in a snapshot",
                 "targetOpTime"_attr = targetOpTime,
-                "currentCommittedSnapshotOpTime"_attr = _getCurrentCommittedSnapshotOpTime(lock));
-
-    LOGV2_DEBUG(21335,
-                3,
-                "waitUntilOpTime: waiting for a new snapshot",
+                "currentCommittedSnapshotOpTime"_attr = _getCurrentCommittedSnapshotOpTime(lock),
                 "deadline"_attr = deadline.value_or(opCtx->getDeadline()));
 
     try {
@@ -4472,16 +4456,6 @@ void ReplicationCoordinatorImpl::_finishReplSetReconfig(OperationContext* opCtx,
         _clearCommittedSnapshot(lk);
     }
 
-    // If we have a split config, schedule heartbeats to each recipient member. It informs them of
-    // the new split config.
-    if (newConfig.isSplitConfig()) {
-        const auto now = _replExecutor->now();
-        const auto recipientConfig = newConfig.getRecipientConfig();
-        for (const auto& member : recipientConfig->members()) {
-            _scheduleHeartbeatToTarget(
-                lk, member.getHostAndPort(), now, newConfig.getReplSetName().toString());
-        }
-    }
     lk.unlock();
     ReplicaSetAwareServiceRegistry::get(_service).onSetCurrentConfig(opCtx);
     _performPostMemberStateUpdateAction(action);

@@ -141,7 +141,7 @@ public:
          * Returns true on successful execution of the fn function
          */
         virtual bool execute(const std::function<bool()>& fn,
-                             const std::function<void(Milliseconds)>& sleepFn) const = 0;
+                             const std::function<void(Milliseconds)>& sleepFn) = 0;
     };
 
 private:
@@ -158,7 +158,7 @@ private:
         }
 
         bool execute(const std::function<bool()>& fn,
-                     const std::function<void(Milliseconds)>& sleepFn) const override {
+                     const std::function<void(Milliseconds)>& sleepFn) override {
             while (_retries < RetryCount) {
                 _retries++;
 
@@ -184,11 +184,11 @@ private:
         }
 
     private:
-        mutable size_t _retries;
-        mutable unsigned int _sleepTime;
+        size_t _retries;
+        unsigned int _sleepTime;
 
-        mutable SecureUrbg _rd;
-        mutable std::mt19937_64 _gen{_rd()};
+        SecureUrbg _rd;
+        std::mt19937_64 _gen{_rd()};
     };
 
 public:
@@ -240,19 +240,18 @@ public:
          * It's caller's responsibility to ensure this lock is acquired only on primary node of
          * replica set and released on step-down.
          */
-        ScopedDatabaseDDLLock(
-            OperationContext* opCtx,
-            const DatabaseName& db,
-            StringData reason,
-            LockMode mode,
-            boost::optional<const BackoffStrategy&> backoffStrategy = boost::none);
+        ScopedDatabaseDDLLock(OperationContext* opCtx,
+                              const DatabaseName& db,
+                              StringData reason,
+                              LockMode mode,
+                              boost::optional<BackoffStrategy&> backoffStrategy = boost::none);
 
     private:
         bool _tryLock(OperationContext* opCtx,
                       const DatabaseName& db,
                       StringData reason,
                       LockMode mode,
-                      const BackoffStrategy& backoffStrategy);
+                      BackoffStrategy& backoffStrategy);
 
         void _lock(OperationContext* opCtx,
                    const DatabaseName& db,
@@ -284,19 +283,18 @@ public:
          * It's caller's responsibility to ensure this lock is acquired only on primary node of
          * replica set and released on step-down.
          */
-        ScopedCollectionDDLLock(
-            OperationContext* opCtx,
-            const NamespaceString& ns,
-            StringData reason,
-            LockMode mode,
-            boost::optional<const BackoffStrategy&> backoffStrategy = boost::none);
+        ScopedCollectionDDLLock(OperationContext* opCtx,
+                                const NamespaceString& ns,
+                                StringData reason,
+                                LockMode mode,
+                                boost::optional<BackoffStrategy&> backoffStrategy = boost::none);
 
     private:
         bool _tryLock(OperationContext* opCtx,
                       const NamespaceString& ns,
                       StringData reason,
                       LockMode mode,
-                      const BackoffStrategy& backoffStrategy);
+                      BackoffStrategy& backoffStrategy);
 
         void _lock(OperationContext* opCtx,
                    const NamespaceString& ns,

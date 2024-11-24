@@ -45,7 +45,6 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/repl/storage_interface.h"
-#include "mongo/db/serverless/serverless_types_gen.h"
 #include "mongo/db/tenant_id.h"
 #include "mongo/unittest/assert.h"
 #include "mongo/unittest/framework.h"
@@ -379,44 +378,6 @@ TEST_F(IndexBuildsCoordinatorMongodTest, SetCommitQuorumFailsToTurnCommitQuorumF
         operationContext(), buildUUID, HostAndPort("test1", 1234)));
 
     assertGet(testFoo1Future.getNoThrow());
-}
-
-TEST_F(IndexBuildsCoordinatorMongodTest, AbortBuildIndexDueToTenantMigration) {
-    const IndexBuildsCoordinator::IndexBuildOptions indexBuildOptionsWithCQOn = {
-        CommitQuorumOptions(1)};
-
-    // Start an index build on _testFooNss with commit quorum enabled.
-    ASSERT_EQ(0, _indexBuildsCoord->getActiveIndexBuildCount(operationContext()));
-    const auto buildUUID = UUID::gen();
-    auto testTenantFoo1Future =
-        assertGet(_indexBuildsCoord->startIndexBuild(operationContext(),
-                                                     _testTenantFooNss.dbName(),
-                                                     _testFooTenantUUID,
-                                                     makeSpecs(_testTenantFooNss, {"a"}),
-                                                     buildUUID,
-                                                     IndexBuildProtocol::kTwoPhase,
-                                                     indexBuildOptionsWithCQOn));
-
-    // we currently have one index build in progress.
-    ASSERT_EQ(1, _indexBuildsCoord->getActiveIndexBuildCount(operationContext()));
-    ASSERT_THROWS_WITH_CHECK(
-        _indexBuildsCoord->assertNoIndexBuildInProgress(),
-        ExceptionFor<ErrorCodes::BackgroundOperationInProgressForDatabase>,
-        [&](const auto& ex) { ASSERT_STRING_CONTAINS(ex.reason(), buildUUID.toString()); });
-
-    ASSERT_OK(_indexBuildsCoord->voteCommitIndexBuild(
-        operationContext(), buildUUID, HostAndPort("test1", 1234)));
-
-    // This call may see the index build active and wait for it to be unregistered, or the index
-    // build may already have been unregistered.
-    _indexBuildsCoord->abortTenantIndexBuilds(operationContext(),
-                                              MigrationProtocolEnum::kMultitenantMigrations,
-                                              _tenantId,
-                                              "tenant migration");
-
-    ASSERT_EQ(0, _indexBuildsCoord->getActiveIndexBuildCount(operationContext()));
-
-    assertGet(testTenantFoo1Future.getNoThrow());
 }
 
 }  // namespace

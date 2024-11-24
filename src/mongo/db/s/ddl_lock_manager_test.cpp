@@ -135,7 +135,7 @@ TEST_F(DDLLockManagerTest, TryLockDatabase) {
         const auto newCtx = cc().makeOperationContext();
         newCtx->setAlwaysInterruptAtStepDownOrUp_UNSAFE();
         ScopedSetShardRole shardRole(newCtx.get(), nss, boost::none, _dbVersion);
-        const auto strategy = DDLLockManager::SingleTryBackoffStrategy();
+        auto strategy = DDLLockManager::SingleTryBackoffStrategy();
 
         const auto lock = [&]() {
             DDLLockManager::ScopedDatabaseDDLLock(
@@ -169,7 +169,7 @@ TEST_F(DDLLockManagerTest, TryLockCollection) {
         const auto newCtx = cc().makeOperationContext();
         newCtx->setAlwaysInterruptAtStepDownOrUp_UNSAFE();
         ScopedSetShardRole shardRole(newCtx.get(), nss, boost::none, _dbVersion);
-        const auto strategy = DDLLockManager::SingleTryBackoffStrategy();
+        auto strategy = DDLLockManager::SingleTryBackoffStrategy();
 
         const auto lock = [&]() {
             DDLLockManager::ScopedCollectionDDLLock(

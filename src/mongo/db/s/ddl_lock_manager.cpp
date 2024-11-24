@@ -200,7 +200,7 @@ DDLLockManager::ScopedDatabaseDDLLock::ScopedDatabaseDDLLock(
     const DatabaseName& db,
     StringData reason,
     LockMode mode,
-    boost::optional<const BackoffStrategy&> backoffStrategy) {
+    boost::optional<BackoffStrategy&> backoffStrategy) {
     if (backoffStrategy) {
         if (_tryLock(opCtx, db, reason, mode, *backoffStrategy)) {
             return;
@@ -213,7 +213,7 @@ bool DDLLockManager::ScopedDatabaseDDLLock::_tryLock(OperationContext* opCtx,
                                                      const DatabaseName& db,
                                                      StringData reason,
                                                      LockMode mode,
-                                                     const BackoffStrategy& backoffStrategy) {
+                                                     BackoffStrategy& backoffStrategy) {
     return backoffStrategy.execute(
         [&]() {
             try {
@@ -259,7 +259,7 @@ DDLLockManager::ScopedCollectionDDLLock::ScopedCollectionDDLLock(
     const NamespaceString& ns,
     StringData reason,
     LockMode mode,
-    boost::optional<const BackoffStrategy&> backoffStrategy) {
+    boost::optional<BackoffStrategy&> backoffStrategy) {
     if (backoffStrategy) {
         if (_tryLock(opCtx, ns, reason, mode, *backoffStrategy)) {
             return;
@@ -272,7 +272,7 @@ bool DDLLockManager::ScopedCollectionDDLLock::_tryLock(OperationContext* opCtx,
                                                        const NamespaceString& ns,
                                                        StringData reason,
                                                        LockMode mode,
-                                                       const BackoffStrategy& backoffStrategy) {
+                                                       BackoffStrategy& backoffStrategy) {
     return backoffStrategy.execute(
         [&]() {
             try {

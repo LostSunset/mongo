@@ -74,6 +74,7 @@
 #include "mongo/db/concurrency/exception_util.h"
 #include "mongo/db/concurrency/lock_manager_defs.h"
 #include "mongo/db/database_name.h"
+#include "mongo/db/db_raii.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/dbhelpers.h"
 #include "mongo/db/drop_gen.h"
@@ -645,17 +646,6 @@ private:
                     opCtx, DDLCoordinatorTypeEnum::kRenameCollection);
         }
 
-        // TODO SERVER-79304 Remove once shardCollection authoritative version becomes LTS
-        // TODO (SERVER-77915): Remove once 8.0 (trackUnshardedCollections) becomes lastLTS.
-        if (isDowngrading &&
-            (feature_flags::gAuthoritativeShardCollection
-                 .isDisabledOnTargetFCVButEnabledOnOriginalFCV(requestedVersion,
-                                                               originalVersion))) {
-            ShardingDDLCoordinatorService::getService(opCtx)
-                ->waitForCoordinatorsOfGivenTypeToComplete(
-                    opCtx, DDLCoordinatorTypeEnum::kCreateCollection);
-        }
-
         // TODO SERVER-87119 remove the following scope once v8.0 branches out
         if (isDowngrading &&
             feature_flags::gConvertToCappedCoordinator.isDisabledOnTargetFCVButEnabledOnOriginalFCV(
@@ -1168,6 +1158,48 @@ private:
         }
     }
 
+    // Insert the authorization schema document in admin.system.version if there are any user or
+    // role documents on-disk. This must be performed on FCV downgrade since lower-version binaries
+    // assert that this document exists when users and/or roles exist during initial sync.
+    void _createAuthzSchemaVersionDocIfNeeded(OperationContext* opCtx) {
+        // Check if any user or role documents exist on-disk.
+        bool hasUserDocs, hasRoleDocs = false;
+        BSONObj userDoc, roleDoc;
+        {
+            AutoGetCollectionForReadCommandMaybeLockFree usersColl(
+                opCtx, NamespaceString::kAdminUsersNamespace);
+            hasUserDocs = Helpers::findOne(opCtx, usersColl.getCollection(), BSONObj(), userDoc);
+        }
+
+        {
+            AutoGetCollectionForReadCommandMaybeLockFree rolesColl(
+                opCtx, NamespaceString::kAdminRolesNamespace);
+            hasRoleDocs = Helpers::findOne(opCtx, rolesColl.getCollection(), BSONObj(), roleDoc);
+        }
+
+        // If they do, write an authorization schema document to disk set to schemaVersionSCRAM28.
+        if (hasUserDocs || hasRoleDocs) {
+            DBDirectClient client(opCtx);
+            auto result = client.update([&] {
+                write_ops::UpdateCommandRequest updateOp(
+                    NamespaceString::kServerConfigurationNamespace);
+                updateOp.setUpdates({[&] {
+                    write_ops::UpdateOpEntry entry;
+                    entry.setQ(AuthorizationManager::versionDocumentQuery);
+                    entry.setU(write_ops::UpdateModification::parseFromClassicUpdate(
+                        BSON("$set" << BSON(AuthorizationManager::schemaVersionFieldName
+                                            << AuthorizationManager::schemaVersion28SCRAM))));
+                    entry.setMulti(false);
+                    entry.setUpsert(true);
+                    return entry;
+                }()});
+                return updateOp;
+            }());
+
+            write_ops::checkWriteErrors(result);
+        }
+    }
+
     // This helper function is for any internal server downgrade cleanup, such as dropping
     // collections or aborting. This cleanup will happen after user collection downgrade
     // cleanup.
@@ -1231,6 +1263,7 @@ private:
         }
 
         _cleanUpClusterParameters(opCtx, requestedVersion);
+        _createAuthzSchemaVersionDocIfNeeded(opCtx);
         // Note the config server is also considered a shard, so the ConfigServer and ShardServer
         // roles aren't mutually exclusive.
         if (role && role->has(ClusterRole::ConfigServer)) {
@@ -1609,13 +1642,6 @@ private:
     void _finalizeUpgrade(OperationContext* opCtx,
                           const multiversion::FeatureCompatibilityVersion requestedVersion) {
         auto role = ShardingState::get(opCtx)->pollClusterRole();
-        // TODO SERVER-79304 Remove once shardCollection authoritative version becomes LTS
-        if (role && role->has(ClusterRole::ShardServer) &&
-            feature_flags::gAuthoritativeShardCollection.isEnabledOnVersion(requestedVersion)) {
-            ShardingDDLCoordinatorService::getService(opCtx)
-                ->waitForCoordinatorsOfGivenTypeToComplete(
-                    opCtx, DDLCoordinatorTypeEnum::kCreateCollectionPre80Compatible);
-        }
 
         // TODO SERVER-77915: Remove once v8.0 branches out.
         if (role && role->has(ClusterRole::ShardServer) &&

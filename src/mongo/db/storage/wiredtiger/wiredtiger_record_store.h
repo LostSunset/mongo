@@ -156,8 +156,7 @@ public:
 
     bool updateWithDamagesSupported() const override;
 
-    void printRecordMetadata(OperationContext* opCtx,
-                             const RecordId& recordId,
+    void printRecordMetadata(const RecordId& recordId,
                              std::set<Timestamp>* recordTimestamps) const override;
 
     std::unique_ptr<SeekableRecordCursor> getCursor(OperationContext* opCtx,
@@ -169,7 +168,9 @@ public:
         return !_isEphemeral;
     }
 
-    void validate(RecoveryUnit&, bool full, ValidateResults* results) override;
+    void validate(RecoveryUnit& ru,
+                  const CollectionValidation::ValidationOptions& options,
+                  ValidateResults* results) override;
 
     void appendNumericCustomStats(RecoveryUnit& ru,
                                   BSONObjBuilder* result,
@@ -369,12 +370,12 @@ public:
 
     ~Oplog() override;
 
-    void postConstructorInit(OperationContext* opCtx);
-
     std::unique_ptr<SeekableRecordCursor> getCursor(OperationContext*,
                                                     bool forward = true) const override;
 
-    void validate(RecoveryUnit&, bool full, ValidateResults*) override;
+    void validate(RecoveryUnit&,
+                  const CollectionValidation::ValidationOptions&,
+                  ValidateResults*) override;
 
     RecordStore::Capped* capped() override;
 
@@ -395,7 +396,7 @@ public:
 
     int64_t getMaxSize() const;
 
-    WiredTigerOplogTruncateMarkers* truncateMarkers() const;
+    void setTruncateMarkers(std::shared_ptr<WiredTigerOplogTruncateMarkers> markers);
 
 private:
     Status _insertRecords(OperationContext*,
@@ -608,9 +609,4 @@ private:
 // WT failpoint to throw write conflict exceptions randomly
 extern FailPoint WTWriteConflictException;
 extern FailPoint WTWriteConflictExceptionForReads;
-
-// Prevents oplog writes from becoming visible asynchronously. Once activated, new writes will not
-// be seen by regular readers until deactivated. It is unspecified whether writes that commit before
-// activation will become visible while active.
-extern FailPoint WTPauseOplogVisibilityUpdateLoop;
 }  // namespace mongo

@@ -69,7 +69,6 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/record_id.h"
 #include "mongo/db/repl/oplog_entry.h"
-#include "mongo/db/serverless/serverless_types_gen.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/storage/disk_space_monitor.h"
 #include "mongo/db/tenant_id.h"
@@ -298,21 +297,6 @@ public:
                                   const std::string& reason);
 
     void abortUserIndexBuildsForUserWriteBlocking(OperationContext* opCtx);
-
-    /**
-     * Signals all of the index builds belonging to the specified tenant to abort and then waits
-     * until the index builds are no longer running. The provided 'reason' will be used in the
-     * error message that the index builders return to their callers.
-     *
-     * Does not require holding locks.
-     *
-     * Does not stop new index builds from starting. Caller must make that guarantee.
-     */
-
-    void abortTenantIndexBuilds(OperationContext* opCtx,
-                                MigrationProtocolEnum protocol,
-                                const boost::optional<TenantId>& tenantId,
-                                const std::string& reason);
 
     /**
      * Signals all of the index builds to abort and then waits until the index builds are no longer
@@ -583,11 +567,6 @@ private:
     Status _dropIndexesForRepair(OperationContext* opCtx,
                                  CollectionWriter& collection,
                                  const std::vector<std::string>& indexNames);
-
-    void _abortTenantIndexBuilds(OperationContext* opCtx,
-                                 const std::vector<std::shared_ptr<ReplIndexBuildState>>& builds,
-                                 MigrationProtocolEnum protocol,
-                                 const std::string& reason);
 
     void _abortAllIndexBuildsWithReason(OperationContext* opCtx,
                                         IndexBuildAction signalAction,
