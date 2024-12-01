@@ -21,7 +21,6 @@ from typing import Any, Dict, List, Set, Tuple
 
 import distro
 import git
-import mongo.platform as mongo_platform
 import psutil
 import requests
 import SCons
@@ -231,6 +230,7 @@ def bazel_builder_action(
                     if os.path.exists(str(t)):
                         os.remove(str(t))
                     os.link(s, str(t))
+                    os.chmod(str(t), os.stat(str(t)).st_mode | stat.S_IWUSR)
                 else:
                     print(
                         f"Copying {s} to {t} instead of hardlinking because files are on different mounts."
@@ -360,6 +360,13 @@ def perform_tty_bazel_build(bazel_cmd: str) -> None:
     )
 
     os.close(child_fd)
+
+    # Timeout when stuck scheduling without making progress for more than 10 minutes
+    # Ex string:
+    # [21,537 / 21,603] [Sched] Compiling src/mongo/db/s/migration_chunk_cloner_source.cpp; 1424s
+    last_sched_target_progress = ""
+    sched_time_start = 0
+    sched_timeout_sec = 60 * 10
     try:
         # This loop will terminate with an EOF or EOI when the process ends.
         while True:
@@ -373,7 +380,20 @@ def perform_tty_bazel_build(bazel_cmd: str) -> None:
                 if not data:  # EOF
                     break
 
-            write_bazel_build_output(data.decode())
+            line = data.decode()
+            write_bazel_build_output(line)
+            if "[Sched]" in line:
+                target_progress = line.split("[Sched]")[0].strip()
+                if len(target_progress) > 0:
+                    if last_sched_target_progress == target_progress:
+                        if time.time() - sched_time_start > sched_timeout_sec:
+                            write_bazel_build_output("Stuck scheduling for too long, terminating")
+                            bazel_proc.kill()
+                            bazel_proc.wait()
+                            raise subprocess.CalledProcessError(-1, bazel_cmd, "", "")
+                    else:
+                        sched_time_start = time.time()
+                    last_sched_target_progress = target_progress
     finally:
         os.close(parent_fd)
         if bazel_proc.poll() is None:
@@ -994,14 +1014,8 @@ common --bes_keywords=engflow:BuildScmStatus={status}
 
 def setup_bazel_env_vars() -> None:
     # Set the JAVA_HOME directories for ppc64le and s390x since their bazel binaries are not compiled with a built-in JDK.
-    if platform.machine().lower() == "ppc64le":
-        Globals.bazel_env_variables["JAVA_HOME"] = (
-            "/usr/lib/jvm/java-21-openjdk-21.0.4.0.7-1.el8.ppc64le"
-        )
-    elif platform.machine().lower() == "s390x":
-        Globals.bazel_env_variables["JAVA_HOME"] = (
-            "/usr/lib/jvm/java-21-openjdk-21.0.4.0.7-1.el8.s390x"
-        )
+    if platform.machine().lower() in {"ppc64le", "s390x"}:
+        Globals.bazel_env_variables["JAVA_HOME"] = "/usr/lib/jvm/java-21-openjdk"
 
 
 def setup_max_retry_attempts() -> None:
@@ -1206,7 +1220,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         if not validate_remote_execution_certs(env):
             sys.exit(1)
 
-        if env.GetOption("bazel-dynamic-execution") == True:
+        if env.GetOption("bazel-dynamic-execution"):
             try:
                 docker_detected = (
                     subprocess.run(["docker", "info"], capture_output=True).returncode == 0

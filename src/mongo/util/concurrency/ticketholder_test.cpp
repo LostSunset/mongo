@@ -27,6 +27,7 @@
  *    it in the license file.
  */
 #include "mongo/stdx/thread.h"
+#include "mongo/util/system_tick_source.h"
 #include <concepts>
 #include <memory>
 
@@ -64,6 +65,9 @@ public:
         : ServiceContextTest(
               std::make_unique<ScopedGlobalServiceContextForTest>(ServiceContext::make(
                   nullptr, nullptr, std::make_unique<TickSourceMock<Microseconds>>()))) {}
+
+    TicketHolderTest(std::unique_ptr<ScopedGlobalServiceContextForTest> scopedGlobalServiceCtx)
+        : ServiceContextTest{std::move(scopedGlobalServiceCtx)} {}
 
     static inline const Milliseconds kSleepTime{1};
 
@@ -123,6 +127,7 @@ public:
 
 protected:
     class Stats;
+    class Hotel;
     struct MockAdmission;
     ServiceContext::UniqueClient _client;
     ServiceContext::UniqueOperationContext _opCtx;
@@ -157,6 +162,40 @@ public:
 
 private:
     TicketHolder* _holder;
+};
+
+/**
+ * Class used to validate concurrency and waiting behavior of a TicketHolder. We set the number
+ * of tickets available to _nRooms and require ticket acquisition before check-in. TicketHolder
+ * should prevent hotel from "overbooking" and from allowing threads to check out before check in.
+ */
+class TicketHolderTest::Hotel {
+public:
+    Hotel(int nRooms) : _nRooms(nRooms), _checkedIn(0), _maxRooms(0) {}
+
+    void checkIn() {
+        stdx::lock_guard<stdx::mutex> lk(_frontDesk);
+        _checkedIn++;
+        ASSERT_TRUE(_checkedIn <= _nRooms);
+        if (_checkedIn > _maxRooms)
+            _maxRooms = _checkedIn;
+    }
+
+    void checkOut() {
+        stdx::lock_guard<stdx::mutex> lk(_frontDesk);
+        _checkedIn--;
+        ASSERT_TRUE(_checkedIn >= 0);
+    }
+
+    void validateFilledToCapacity() {
+        ASSERT_TRUE(_maxRooms == _nRooms);
+    }
+
+private:
+    stdx::mutex _frontDesk;
+    int _nRooms;
+    int _checkedIn;
+    int _maxRooms;
 };
 
 /**
@@ -337,6 +376,47 @@ TEST_F(TicketHolderTest, PriorityBookkeeping) {
               0);
 
     ASSERT_EQ(statsWhenFinished.getObjectField("exempt").getIntField("finishedProcessing"), 1);
+}
+
+TEST_F(TicketHolderTest, HighlyConcurrentAcquireReleaseTicket) {
+    std::vector<stdx::thread> threads;
+    constexpr int numRooms = 3;
+    constexpr int numCheckIns = 50;
+    constexpr int numThreads = 10;
+
+    Hotel hotel{numRooms};
+    OperationContext* opCtx = _opCtx.get();
+    auto holder =
+        std::make_unique<TicketHolder>(getServiceContext(), numRooms, false /* trackPeakUsed */);
+
+    for (size_t i = 0; i < numThreads; ++i) {
+        threads.emplace_back([&, numCheckIns]() {
+            MockAdmissionContext admCtx{};
+            for (size_t checkIn = 0; checkIn < numCheckIns; checkIn++) {
+                auto ticket = holder->waitForTicket(opCtx, &admCtx);
+                hotel.checkIn();
+
+                // Ticket is an RAII-style object. We hold onto it by staying in the hotel
+                // to simulate holding a ticket during an operation's execution.
+                Timer t;
+                while (1) {
+                    stdx::this_thread::yield();
+                    if (t.micros() > 4)
+                        break;
+                }
+
+                if (checkIn == numCheckIns - 1)
+                    sleepsecs(2);
+                hotel.checkOut();
+            }
+        });
+    }
+
+    for (auto& thread : threads) {
+        thread.join();
+    }
+
+    hotel.validateFilledToCapacity();
 }
 
 TEST_F(TicketHolderTest, QueuedWaiterGetsTicketWhenMadeAvailable) {
@@ -684,7 +764,7 @@ TEST_F(TicketHolderImmediateResizeTest, WaitQueueMax1) {
     // The fifth ticket is getting aquired after waiting
     boost::optional<Ticket> ticket;
     _opCtx->runWithDeadline(getNextDeadline(), ErrorCodes::ExceededTimeLimit, [&] {
-        // We can gst a ticket when one is available
+        // We can get a ticket when one is available
         ticket = std::move(ticketFuture).get(_opCtx.get());
     });
 
@@ -701,5 +781,74 @@ TEST_F(TicketHolderImmediateResizeTest, WaitQueueMax1) {
     ASSERT_EQ(holder->used(), 0);
     ASSERT_EQ(holder->available(), 4);
     ASSERT_EQ(holder->outof(), 4);
+}
+
+// For the following test, we need a real source of tick
+class TicketHolderTestTick : public TicketHolderTest {
+public:
+    TicketHolderTestTick()
+        : TicketHolderTest{std::make_unique<ScopedGlobalServiceContextForTest>(
+              ServiceContext::make(nullptr, nullptr, makeSystemTickSource()))} {}
+};
+
+TEST_F(TicketHolderTestTick, TotalTimeQueueMicrosAccumulated) {
+    constexpr int initialNumTickets = 0;
+    auto holder = std::make_unique<TicketHolder>(getServiceContext(),
+                                                 initialNumTickets,
+                                                 false /* trackPeakUsed */,
+                                                 TicketHolder::ResizePolicy::kImmediate);
+
+
+    // Verify we have no tickets
+    ASSERT_EQ(holder->used(), 0);
+    ASSERT_EQ(holder->available(), 0);
+    ASSERT_EQ(holder->outof(), 0);
+
+    // We aquire a ticket in another thread.
+    // The waiting will cause totalTimeQueueMicros to be accumulated.
+    // Since no ticket are available, the thread will wait until we resize.
+    MockAdmission releaseWaiterAdmission{getServiceContext(), AdmissionContext::Priority::kNormal};
+    Future<Ticket> ticketFuture = spawn([&]() {
+        return holder->waitForTicket(releaseWaiterAdmission.opCtx.get(),
+                                     &releaseWaiterAdmission.admCtx);
+    });
+
+    // We wait until ticketFuture is actually waiting for the ticket or until timeout exceeded
+    _opCtx->runWithDeadline(getNextDeadline(), ErrorCodes::ExceededTimeLimit, [&] {
+        waitUntilCanceled(*_opCtx, [&] {
+            return releaseWaiterAdmission.admCtx.startQueueingTime() != boost::none;
+        });
+    });
+
+    // We wait for 50 millisecond so that totalTimeQueuedMicros gets increased
+    stdx::this_thread::sleep_for(50'000us);
+
+    // After waiting, we let the ticket through.
+    holder->resize(_opCtx.get(), 1);
+
+    // We block until we acquire the ticket
+    boost::optional<Ticket> ticket;
+    _opCtx->runWithDeadline(getNextDeadline(), ErrorCodes::ExceededTimeLimit, [&] {
+        // We can get a ticket when one is available
+        ticket = std::move(ticketFuture).get(_opCtx.get());
+    });
+
+    // The total time queued is supposed to be equal or bigger than the time we waited before
+    // resizing
+    auto const totalTimeQueue = releaseWaiterAdmission.admCtx.totalTimeQueuedMicros();
+    ASSERT_GTE(totalTimeQueue, Microseconds{50'000});
+
+    // ensure 0 are now available and 1 are in-use
+    ASSERT_EQ(holder->used(), 1);
+    ASSERT_EQ(holder->available(), 0);
+    ASSERT_EQ(holder->outof(), 1);
+
+    // Releasing the ticket
+    ticket.reset();
+
+    // ensure 1 are now available and 0 are in-use
+    ASSERT_EQ(holder->used(), 0);
+    ASSERT_EQ(holder->available(), 1);
+    ASSERT_EQ(holder->outof(), 1);
 }
 }  // namespace

@@ -375,10 +375,6 @@ config_fuzzer_params = {
             "max": 4096,
             "fuzz_at": ["startup"],
         },
-        "warmMinConnectionsInShardingTaskExecutorPoolOnStartup": {
-            "choices": [True, False],
-            "fuzz_at": ["startup"],
-        },
         "diagnosticDataCollectionEnabled": {
             "choices": [True, False],
             "fuzz_at": ["startup"],
@@ -446,4 +442,12 @@ config_fuzzer_params = {
             "fuzz_at": ["startup", "runtime"],
         },
     },
+}
+
+config_fuzzer_extra_configs = {
+    "mongod": {
+        "directoryperdb": {"choices": [True, False]},
+        "wiredTigerDirectoryForIndexes": {"choices": [True, False]},
+    },
+    "mongos": {},
 }

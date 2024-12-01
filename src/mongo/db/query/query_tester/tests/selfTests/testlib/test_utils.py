@@ -26,8 +26,8 @@ def assert_output_contains(actual: bytes, expected: str):
     assert expected.encode("utf-8") in actual, f"Expected '{expected}' in output but got '{actual}'"
 
 
-def assert_exit_code(actual: ExitCode, expected: ExitCode):
-    assert expected == actual, f"Expected {expected} but got '{actual}'"
+def assert_exit_code(actual: ExitCode, expected: ExitCode, output: str):
+    assert expected == actual, f"Expected {expected} but got '{actual}' with output: {output}"
 
 
 def _get_mongotest_args() -> tuple[str, str]:
@@ -89,9 +89,7 @@ def run_mongotest(
         Tuple containing the exit code and output (as bytes) from the mongotest execution.
     """
     if out_result and mode == Mode.COMPARE:
-        sys.exit(
-            f"Mode must be set to RUN or NORMALIZE if we want to produce output .result files."
-        )
+        sys.exit("Mode must be set to RUN or NORMALIZE if we want to produce output .result files.")
 
     # Retrieve mongotest binary path and mongod uri from command line arguments
     mongotest, uri = _get_mongotest_args()

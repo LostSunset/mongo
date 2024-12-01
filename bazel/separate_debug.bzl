@@ -144,6 +144,18 @@ def create_new_ccinfo_library(ctx, cc_toolchain, shared_lib, static_lib, cc_shar
                 static_library = static_lib if cc_shared_library == None else None,
                 alwayslink = True,
             )
+
+            # For some reason Bazel isn't deduplicating the user link flags, which leads to them accumulating
+            # with each layer added. Deduplicate them manually.
+            all_user_link_flags = dict()
+            for flag in ctx.attr.binary_with_debug[CcInfo].linking_context.linker_inputs.to_list()[0].user_link_flags:
+                all_user_link_flags[flag] = True
+            for input in ctx.attr.binary_with_debug[CcInfo].linking_context.linker_inputs.to_list()[1:]:
+                for flag in input.user_link_flags:
+                    if flag in all_user_link_flags:
+                        all_user_link_flags.pop(flag)
+            all_user_link_flags = [flag for flag, _ in all_user_link_flags.items()]
+
             linker_input = cc_common.create_linker_input(
                 owner = ctx.label,
                 libraries = depset(direct = [direct_lib]),
@@ -284,10 +296,10 @@ def linux_extraction(ctx, cc_toolchain, inputs):
     # The final program binary depends on the existence of the dependent dynamic library files. With
     # build-without-the-bytes enabled, these aren't downloaded. Manually collect them and add them to the
     # output set.
-    dynamic_deps_runfiles = None
+    dynamic_deps_runfiles = ctx.runfiles(files = [])
     if ctx.attr.type == "program":
         dynamic_deps = get_transitive_dyn_libs(ctx.attr.deps)
-        dynamic_deps_runfiles = ctx.runfiles(files = get_transitive_dyn_libs(ctx.attr.deps))
+        dynamic_deps_runfiles = ctx.attr.binary_with_debug[DefaultInfo].data_runfiles.merge(ctx.runfiles(files = get_transitive_dyn_libs(ctx.attr.deps)))
         outputs.extend(dynamic_deps)
 
     provided_info = [
@@ -360,8 +372,11 @@ def macos_extraction(ctx, cc_toolchain, inputs):
     # The final program binary depends on the existence of the dependent dynamic library files. With
     # build-without-the-bytes enabled, these aren't downloaded. Manually collect them and add them to the
     # output set.
+    dynamic_deps_runfiles = ctx.runfiles(files = [])
     if ctx.attr.type == "program":
-        outputs.extend(get_transitive_dyn_libs(ctx.attr.deps))
+        dynamic_deps = get_transitive_dyn_libs(ctx.attr.deps)
+        dynamic_deps_runfiles = ctx.attr.binary_with_debug[DefaultInfo].data_runfiles.merge(ctx.runfiles(files = get_transitive_dyn_libs(ctx.attr.deps)))
+        outputs.extend(dynamic_deps)
 
     provided_info = [
         DefaultInfo(
@@ -435,6 +450,7 @@ def windows_extraction(ctx, cc_toolchain, inputs):
         DefaultInfo(
             files = depset(outputs),
             executable = output if ctx.attr.type == "program" else None,
+            runfiles = ctx.attr.binary_with_debug[DefaultInfo].data_runfiles,
         ),
         create_new_ccinfo_library(ctx, cc_toolchain, output_dynamic_library, output_library, ctx.attr.cc_shared_library),
     ]
