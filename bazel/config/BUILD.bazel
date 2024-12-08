@@ -2125,6 +2125,14 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "enterprise_feature_ldap_and_wiredtiger_enabled",
+    match_all = [
+        "//bazel/config:enterprise_feature_ldap_enabled",
+        "//bazel/config:use_wiredtiger_enabled",
+    ],
+)
+
+selects.config_setting_group(
     name = "enterprise_feature_audit_or_encryptdb_enabled",
     match_any = [
         ":enterprise_feature_audit_enabled",
@@ -2178,4 +2186,60 @@ config_setting(
     flag_values = {
         "//bazel/config:use_sasl_client": "True",
     },
+)
+
+# --------------------------------------
+# link_timeout_8min
+# --------------------------------------
+
+bool_flag(
+    name = "link_timeout_8min",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "link_timeout_8min_enabled",
+    flag_values = {
+        "//bazel/config:link_timeout_8min": "True",
+    },
+)
+
+# --------------------------------------
+# fission
+# --------------------------------------
+
+config_setting(
+    name = "fission_enabled",
+    values = {
+        "fission": "yes",
+    },
+)
+
+config_setting(
+    name = "linux_gcc_fission",
+    constraint_values = [
+        "@platforms//os:linux",
+    ],
+    flag_values = {
+        "//bazel/config:compiler_type": "gcc",
+    },
+    values = {
+        "fission": "yes",
+    },
+)
+
+selects.config_setting_group(
+    name = "linux_gcc_fission_x86_64",
+    match_all = [
+        "@platforms//cpu:x86_64",
+        ":linux_gcc_fission",
+    ],
+)
+
+selects.config_setting_group(
+    name = "linux_gcc_fission_aarch64",
+    match_all = [
+        "@platforms//cpu:aarch64",
+        ":linux_gcc_fission",
+    ],
 )

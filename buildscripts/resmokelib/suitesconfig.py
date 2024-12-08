@@ -130,9 +130,10 @@ def get_suites(suite_names_or_paths: list[str], test_files: list[str]) -> List[_
             # behaves, grouping the list of tests into a single group to run simultaneously. However, suite.excluded
             # is a list[str], and thus we need to flatten override_suite.tests to ensure we correctly check
             # whether each individual test is excluded.
-            if override_suite.tests and all(
+            using_nested_test_suites = override_suite.tests and all(
                 isinstance(item, list) for item in override_suite.tests
-            ):
+            )
+            if using_nested_test_suites:
                 flattened_tests = list(itertools.chain.from_iterable(override_suite.tests))
             else:
                 flattened_tests = override_suite.tests
@@ -142,6 +143,17 @@ def get_suites(suite_names_or_paths: list[str], test_files: list[str]) -> List[_
                         loggers.ROOT_EXECUTOR_LOGGER.warning(
                             "Will forcibly run excluded test: %s", test
                         )
+                    elif _config.SKIP_EXCLUDED_TESTS:
+                        loggers.ROOT_EXECUTOR_LOGGER.warning(
+                            "Will skip excluded test and continue with the suite execution: %s",
+                            test,
+                        )
+                        if using_nested_test_suites:
+                            for nested_list in override_suite.tests:
+                                if test in nested_list:
+                                    nested_list.remove(test)
+                        else:
+                            override_suite.tests.remove(test)
                     else:
                         raise errors.TestExcludedFromSuiteError(
                             f"'{test}' excluded in '{suite.get_name()}'"
@@ -568,7 +580,7 @@ class SuiteFinder(object):
         # Mutate the suite config as required by our own (resmokes) config. Pull this out into its own
         # function if it gets too big.
         if _config.FUZZ_RUNTIME_PARAMS:
-            suite["executor"]["hooks"].append({"class": "FuzzRuntimeParameters"})
+            suite["executor"].setdefault("hooks", []).append({"class": "FuzzRuntimeParameters"})
 
         return suite
 

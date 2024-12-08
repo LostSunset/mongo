@@ -141,6 +141,7 @@ MONGO_FAIL_POINT_DEFINE(WTSetOldestTSToStableTS);
 MONGO_FAIL_POINT_DEFINE(WTRollbackToStableReturnOnEBUSY);
 MONGO_FAIL_POINT_DEFINE(hangBeforeUnrecoverableRollbackError);
 MONGO_FAIL_POINT_DEFINE(WTDisableFastShutDown);
+MONGO_FAIL_POINT_DEFINE(WTFailImportSortedDataInterface);
 
 const std::string kPinOldestTimestampAtStartupName = "_wt_startup";
 
@@ -1701,6 +1702,9 @@ Status WiredTigerKVEngine::importSortedDataInterface(RecoveryUnit& ru,
                 "WiredTigerKVEngine::importSortedDataInterface",
                 "ident"_attr = ident,
                 "config"_attr = config);
+    if (WTFailImportSortedDataInterface.shouldFail()) {
+        return Status(ErrorCodes::UnknownError, "WTFailImportSortedDataInterface Mock Error");
+    }
     return WiredTigerIndex::create(WiredTigerRecoveryUnit::get(ru), _uri(ident), config);
 }
 
@@ -1940,11 +1944,26 @@ bool WiredTigerKVEngine::supportsDirectoryPerDB() const {
 
 void WiredTigerKVEngine::_checkpoint(WT_SESSION* session, bool useTimestamp) {
     _currentCheckpointIteration.fetchAndAdd(1);
-    if (useTimestamp) {
-        invariantWTOK(session->checkpoint(session, "use_timestamp=true"), session);
-    } else {
-        invariantWTOK(session->checkpoint(session, "use_timestamp=false"), session);
+    int wtRet;
+    size_t attempt = 0;
+    while (true) {
+        if (useTimestamp) {
+            wtRet = session->checkpoint(session, "use_timestamp=true");
+        } else {
+            wtRet = session->checkpoint(session, "use_timestamp=false");
+        }
+        if (EBUSY == wtRet) {
+            logAndBackoff(9787200,
+                          ::mongo::logv2::LogComponent::kStorage,
+                          logv2::LogSeverity::Info(),
+                          ++attempt,
+                          "Checkpoint returned EBUSY, retrying",
+                          "use_timestamp"_attr = useTimestamp);
+        } else {
+            break;
+        }
     }
+    invariantWTOK(wtRet, session);
     auto checkpointedIteration = _finishedCheckpointIteration.fetchAndAdd(1);
     LOGV2_FOR_RECOVERY(8097402,
                        2,

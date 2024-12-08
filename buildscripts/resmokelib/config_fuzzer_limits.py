@@ -357,23 +357,14 @@ config_fuzzer_params = {
             "choices": [{"mode": "off"}, {"mode": "alwaysOn"}],
             "fuzz_at": ["startup"],
         },
+        "failpoint.enableSignalTesting": {
+            "choices": [{"mode": "off"}, {"mode": "alwaysOn"}],
+            "fuzz_at": ["startup"],
+        },
         "enableDetailedConnectionHealthMetricLogLines": {
             "choices": [True, False],
             "period": 5,
             "fuzz_at": ["startup", "runtime"],
-        },
-        "tcpFastOpenServer": {
-            "choices": [True, False],
-            "fuzz_at": ["startup"],
-        },
-        "tcpFastOpenClient": {
-            "choices": [True, False],
-            "fuzz_at": ["startup"],
-        },
-        "tcpFastOpenQueueSize": {
-            "min": 1,
-            "max": 4096,
-            "fuzz_at": ["startup"],
         },
         "diagnosticDataCollectionEnabled": {
             "choices": [True, False],
@@ -410,19 +401,6 @@ config_fuzzer_params = {
             "period": 5,
             "fuzz_at": ["startup", "runtime"],
         },
-        "tcpFastOpenServer": {
-            "choices": [True, False],
-            "fuzz_at": ["startup"],
-        },
-        "tcpFastOpenClient": {
-            "choices": [True, False],
-            "fuzz_at": ["startup"],
-        },
-        "tcpFastOpenQueueSize": {
-            "min": 1,
-            "max": 4096,
-            "fuzz_at": ["startup"],
-        },
         "warmMinConnectionsInShardingTaskExecutorPoolOnStartup": {
             "choices": [True, False],
             "fuzz_at": ["startup"],
@@ -440,6 +418,10 @@ config_fuzzer_params = {
             "choices": [True, False],
             "period": 10,
             "fuzz_at": ["startup", "runtime"],
+        },
+        "failpoint.enableSignalTesting": {
+            "choices": [{"mode": "off"}, {"mode": "alwaysOn"}],
+            "fuzz_at": ["startup"],
         },
     },
 }

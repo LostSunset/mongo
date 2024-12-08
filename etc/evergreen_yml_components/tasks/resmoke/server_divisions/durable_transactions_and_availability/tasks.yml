@@ -2002,6 +2002,7 @@ tasks:
       - func: "generate resmoke tasks"
         vars:
           suite: concurrency_replication
+          # TODO SERVER-97887 add SIGUSR2 stress testing once libunwind deadlocks are fixed.
           resmoke_args: >-
             --fuzzMongodConfigs=stress
             --fuzzRuntimeParams
@@ -2026,6 +2027,7 @@ tasks:
       - func: "generate resmoke tasks"
         vars:
           suite: concurrency_sharded_replication
+          # TODO SERVER-97887 add SIGUSR2 stress testing once libunwind deadlocks are fixed.
           resmoke_args: >-
             --fuzzMongodConfigs=stress
             --fuzzMongosConfigs=normal
@@ -2205,6 +2207,7 @@ tasks:
         "release_critical",
         "misc_js",
         "non_win_dbg",
+        "suggested_excluding_required__for_devprod_mitigation_only",
       ]
     commands:
       - func: "generate resmoke tasks"

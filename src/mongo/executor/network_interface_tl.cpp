@@ -70,6 +70,8 @@
 #include "mongo/rpc/get_status_from_command_result.h"
 #include "mongo/stdx/mutex.h"
 #include "mongo/transport/ssl_connection_context.h"
+#include "mongo/transport/transport_layer.h"
+#include "mongo/transport/transport_layer_manager.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/cancellation.h"
 #include "mongo/util/concurrency/thread_name.h"
@@ -200,10 +202,12 @@ constexpr auto kNotYetStartedUpMsg = "NetworkInterface has not started yet"_sd;
 }  // namespace
 
 NetworkInterfaceTL::NetworkInterfaceTL(std::string instanceName,
+                                       transport::TransportProtocol protocol,
                                        ConnectionPool::Options connPoolOpts,
                                        std::unique_ptr<NetworkConnectionHook> onConnectHook,
                                        std::unique_ptr<rpc::EgressMetadataHook> metadataHook)
     : _instanceName(std::move(instanceName)),
+      _protocol(protocol),
       _connPoolOpts(std::move(connPoolOpts)),
       _onConnectHook(std::move(onConnectHook)),
       _metadataHook(std::move(metadataHook)),
@@ -263,20 +267,21 @@ void NetworkInterfaceTL::startup() {
     }
 
     _svcCtx = getGlobalServiceContext();
-    auto tl = _svcCtx->getTransportLayerManager();
-    invariant(tl, "Cannot start NetworkInterface without a TransportLayer!");
+    auto tlm = _svcCtx->getTransportLayerManager();
+    invariant(tlm, "Cannot start NetworkInterface without a TransportLayer!");
+
+    auto tl = tlm->getTransportLayer(_protocol);
+    invariant(tl && tl->isEgress());
 
     std::shared_ptr<const transport::SSLConnectionContext> transientSSLContext;
 #ifdef MONGO_CONFIG_SSL
     if (_connPoolOpts.transientSSLParams) {
-        auto statusOrContext = tl->getEgressLayer()->createTransientSSLContext(
-            _connPoolOpts.transientSSLParams.value());
-        uassertStatusOK(statusOrContext.getStatus());
-        transientSSLContext = std::move(statusOrContext.getValue());
+        transientSSLContext = uassertStatusOK(
+            tl->createTransientSSLContext(_connPoolOpts.transientSSLParams.value()));
     }
 #endif
 
-    _reactor = tl->getEgressLayer()->getReactor(transport::TransportLayer::kNewReactor);
+    _reactor = tl->getReactor(transport::TransportLayer::kNewReactor);
     auto typeFactory = std::make_unique<connection_pool_tl::TLTypeFactory>(
         _reactor, tl, std::move(_onConnectHook), _connPoolOpts, transientSSLContext);
     _pool = std::make_shared<ConnectionPool>(

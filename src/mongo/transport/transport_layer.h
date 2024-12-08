@@ -64,6 +64,7 @@ class OperationContext;
 namespace transport {
 
 enum ConnectSSLMode { kGlobalSSLMode, kEnableSSL, kDisableSSL };
+enum class TransportProtocol { MongoRPC, GRPC };
 
 class Reactor;
 using ReactorHandle = std::shared_ptr<Reactor>;
@@ -153,9 +154,24 @@ public:
     }
 
     /**
+     * Returns the TransportProtocol associated with this TransportLayer.
+     */
+    virtual TransportProtocol getTransportProtocol() const = 0;
+
+    /**
      * Return the session manager, if any, associated with this TransportLayer.
      */
     virtual SessionManager* getSessionManager() const = 0;
+
+    /**
+     * Returns whether or not the TransporLayer is configured to use ingress networking.
+     */
+    virtual bool isIngress() const = 0;
+
+    /**
+     * Returns whether or not the TransporLayer is configured to use egress networking.
+     */
+    virtual bool isEgress() const = 0;
 
     /**
      * Returns a shared_ptr reference to the owned SessionManager.

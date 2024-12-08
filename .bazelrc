@@ -71,8 +71,7 @@ build --flag_alias=ssl=//bazel/config:ssl
 build --flag_alias=js_engine=//bazel/config:js_engine
 build --flag_alias=use_sasl_client=//bazel/config:use_sasl_client
 build --flag_alias=enterprise_feature_all=//bazel/config:enterprise_feature_all
-build --flag_alias=enterprise_feature_all=//bazel/config:enterprise_feature_all
-build --flag_alias=enterprise_feature_all=//bazel/config:enterprise_feature_all
+build --flag_alias=link_timeout_8min=//bazel/config:link_timeout_8min
 
 build --flag_alias=dwarf_version=//bazel/config:dwarf_version
 build --flag_alias=http_client=//bazel/config:http_client
@@ -139,11 +138,14 @@ common --remote_upload_local_results=False
 # Settings specific for clang-tidy
 --config=clang-tidy
 build:clang-tidy --//bazel/config:compiler_type=clang
+build:clang-tidy --build_tag_filters=-mongo-tidy-tests
 build:clang-tidy --aspects @bazel_clang_tidy//clang_tidy:clang_tidy.bzl%clang_tidy_aspect
 build:clang-tidy --output_groups=report
 build:clang-tidy --@bazel_clang_tidy//:clang_tidy_config=//:clang_tidy_config
 build:clang-tidy --@bazel_clang_tidy//:clang_tidy_executable=@mongo_toolchain//:clang_tidy
 build:clang-tidy --@bazel_clang_tidy//:clang_tidy_additional_deps=@mongo_toolchain//:all
+build:clang-tidy --@bazel_clang_tidy//:clang_tidy_plugin_deps=//src/mongo/tools/mongo_tidy_checks:mongo_tidy_checks
+
 
 # if you don't have access to the remote execution cluster above, use the local config
 # described below.
@@ -178,6 +180,10 @@ build:public-release --tls_client_key=
 build:public-release --remote_cache_compression=false
 build:public-release --grpc_keepalive_time=0s
 build:public-release --legacy_important_outputs
+
+--config=fission
+build:fission --fission=yes
+build:fission --remote_download_all
 
 # Avoid failing builds when BES metadata fails to upload.
 common --bes_upload_mode=fully_async

@@ -42,6 +42,12 @@ namespace mongo::ce {
  * percentiles.
  */
 std::tuple<double, double, double, double> percentiles(std::vector<double> arr) {
+
+    // Check if the simulation has returned at least one error estimation.
+    if (arr.size() == 0) {
+        return {-1, -1, -1, -1};
+    }
+
     // Sort array before calculating the cummulative stats.
     std::sort(arr.begin(), arr.end());
 
@@ -52,7 +58,6 @@ std::tuple<double, double, double, double> percentiles(std::vector<double> arr) 
 }
 
 size_t calculateFrequencyFromDataVectorEq(const std::vector<stats::SBEValue>& data,
-                                          sbe::value::TypeTags type,
                                           stats::SBEValue valueToCalculate,
                                           bool includeScalar) {
     int actualCard = 0;
@@ -62,8 +67,10 @@ size_t calculateFrequencyFromDataVectorEq(const std::vector<stats::SBEValue>& da
 
             bool matched = std::any_of(
                 array->values().begin(), array->values().end(), [&](const auto& element) {
-                    return mongo::stats::compareValues(
-                               type, element.second, type, valueToCalculate.getValue()) == 0;
+                    return mongo::stats::compareValues(element.first,
+                                                       element.second,
+                                                       valueToCalculate.getTag(),
+                                                       valueToCalculate.getValue()) == 0;
                 });
 
             if (matched) {
@@ -71,8 +78,10 @@ size_t calculateFrequencyFromDataVectorEq(const std::vector<stats::SBEValue>& da
             }
         } else {
             if (includeScalar) {
-                if (mongo::stats::compareValues(
-                        type, value.getValue(), type, valueToCalculate.getValue()) == 0) {
+                if (mongo::stats::compareValues(value.getTag(),
+                                                value.getValue(),
+                                                valueToCalculate.getTag(),
+                                                valueToCalculate.getValue()) == 0) {
                     actualCard++;
                 }
             }
@@ -93,20 +102,27 @@ size_t calculateTypeFrequencyFromDataVectorEq(const std::vector<stats::SBEValue>
 }
 
 static size_t calculateFrequencyFromDataVectorRange(const std::vector<stats::SBEValue>& data,
-                                                    sbe::value::TypeTags type,
                                                     stats::SBEValue valueToCalculateLow,
                                                     stats::SBEValue valueToCalculateHigh) {
     int actualCard = 0;
     for (const auto& value : data) {
         // Higher OR equal to low AND lower OR equal to high.
-        if (((mongo::stats::compareValues(
-                  type, value.getValue(), type, valueToCalculateLow.getValue()) > 0) ||
-             (mongo::stats::compareValues(
-                  type, value.getValue(), type, valueToCalculateLow.getValue()) == 0)) &&
-            ((mongo::stats::compareValues(
-                  type, value.getValue(), type, valueToCalculateHigh.getValue()) < 0) ||
-             (mongo::stats::compareValues(
-                  type, value.getValue(), type, valueToCalculateHigh.getValue()) == 0))) {
+        if (((mongo::stats::compareValues(value.getTag(),
+                                          value.getValue(),
+                                          valueToCalculateLow.getTag(),
+                                          valueToCalculateLow.getValue()) > 0) ||
+             (mongo::stats::compareValues(value.getTag(),
+                                          value.getValue(),
+                                          valueToCalculateLow.getTag(),
+                                          valueToCalculateLow.getValue()) == 0)) &&
+            ((mongo::stats::compareValues(value.getTag(),
+                                          value.getValue(),
+                                          valueToCalculateHigh.getTag(),
+                                          valueToCalculateHigh.getValue()) < 0) ||
+             (mongo::stats::compareValues(value.getTag(),
+                                          value.getValue(),
+                                          valueToCalculateHigh.getTag(),
+                                          valueToCalculateHigh.getValue()) == 0))) {
             actualCard++;
         }
     }
@@ -214,6 +230,23 @@ void printResult(const DataDistributionEnum dataDistribution,
 }
 
 
+/**
+ * Populates TypeDistrVector 'td' based on the input configuration.
+ *
+ * This function iterates over a given type combination and populates the provided 'td' with various
+ * statistical distributions according to the specified types and their probabilities.
+ *
+ * This function supports data types: nothing, null, boolean, integer, string, and array. Note that
+ * currently, arrays are only generated with integer elements.
+ *
+ * @param td The TypeDistrVector that will be populated.
+ * @param interval A pair representing the inclusive minimum and maximum bounds for the data.
+ * @param typeCombination The types and their associated probabilities presenting the distribution.
+ * @param ndv The number of distinct values to generate.
+ * @param seedArray A random number seed for generating array. Used only by TypeTags::Array.
+ * @param mdd The distribution descriptor.
+ * @param arrayLength The maximum length for array distributions, defaulting to 0.
+ */
 void populateTypeDistrVectorAccordingToInputConfig(stats::TypeDistrVector& td,
                                                    const std::pair<size_t, size_t>& interval,
                                                    const TypeCombination& typeCombination,
@@ -237,8 +270,12 @@ void populateTypeDistrVectorAccordingToInputConfig(stats::TypeDistrVector& td,
                 if ((bool)interval.first || (bool)interval.second) {
                     includeTrue = true;
                 }
-                td.push_back(std::make_unique<stats::BooleanDistribution>(
-                    mdd, type.typeProbability, ndv, includeFalse, includeTrue));
+                td.push_back(std::make_unique<stats::BooleanDistribution>(mdd,
+                                                                          type.typeProbability,
+                                                                          (int)includeFalse +
+                                                                              (int)includeTrue,
+                                                                          includeFalse,
+                                                                          includeTrue));
                 break;
             }
             case sbe::value::TypeTags::NumberInt32:
@@ -248,7 +285,7 @@ void populateTypeDistrVectorAccordingToInputConfig(stats::TypeDistrVector& td,
                                                                       ndv,
                                                                       interval.first,
                                                                       interval.second,
-                                                                      0,
+                                                                      0 /*nullsRatio*/,
                                                                       type.nanProb));
                 break;
             case sbe::value::TypeTags::NumberDouble:
@@ -257,7 +294,7 @@ void populateTypeDistrVectorAccordingToInputConfig(stats::TypeDistrVector& td,
                                                                          ndv,
                                                                          interval.first,
                                                                          interval.second,
-                                                                         0,
+                                                                         0 /*nullsRatio*/,
                                                                          type.nanProb));
                 break;
             case sbe::value::TypeTags::StringSmall:
@@ -364,20 +401,12 @@ void generateDataZipfian(const size_t size,
     data = desc.genRandomDataset(size);
 }
 
-ErrorCalculationSummary runQueries(size_t size,
-                                   size_t numberOfQueries,
-                                   QueryType queryType,
-                                   const std::pair<size_t, size_t> interval,
-                                   const TypeProbability queryTypeInfo,
-                                   const std::vector<stats::SBEValue>& data,
-                                   const std::shared_ptr<const stats::CEHistogram> ceHist,
-                                   bool includeScalar,
-                                   bool useE2EAPI,
-                                   const size_t seed) {
-    double relativeErrorSum = 0, relativeErrorMax = 0;
-    ErrorCalculationSummary finalResults;
-
-    // 'sbeValLow' stores also the values for the equality comparison.
+std::vector<std::pair<stats::SBEValue, stats::SBEValue>> generateIntervals(
+    QueryType queryType,
+    const std::pair<size_t, size_t>& interval,
+    size_t numberOfQueries,
+    const TypeProbability& queryTypeInfo,
+    const size_t seed) {
     std::vector<stats::SBEValue> sbeValLow, sbeValHigh;
     switch (queryType) {
         case kPoint: {
@@ -389,7 +418,6 @@ ErrorCalculationSummary runQueries(size_t size,
             break;
         }
         case kRange: {
-
             const std::pair<size_t, size_t> intervalLow{
                 interval.first, interval.first + (interval.second - interval.first) / 2};
 
@@ -405,76 +433,146 @@ ErrorCalculationSummary runQueries(size_t size,
 
             generateDataUniform(
                 numberOfQueries, intervalHigh, {queryTypeInfo}, seed, ndv, sbeValHigh);
-            break;
-        }
-    }
 
-    for (size_t i = 0; i < numberOfQueries; i++) {
-
-        size_t actualCard;
-        EstimationResult estimatedCard;
-
-        switch (queryType) {
-            case kPoint: {
-
-                // Find actual frequency.
-                actualCard = calculateFrequencyFromDataVectorEq(
-                    data, queryTypeInfo.typeTag, sbeValLow[i], includeScalar);
-
-                if (useE2EAPI) {
-                    BSONObj bsonInterval = sbeValuesToInterval(sbeValLow[i], "", sbeValLow[i], "");
-
-                    Interval interval(bsonInterval, true /*startIncluded*/, true /*endIncluded*/);
-
-                    auto sizeCardinality = CardinalityEstimate{CardinalityType{(double)size},
-                                                               EstimationSource::Histogram};
-
-                    estimatedCard.card = HistogramEstimator::estimateCardinality(
-                                             *ceHist, sizeCardinality, interval, includeScalar)
-                                             .toDouble();
-
-                } else {
-                    // Estimate result.
-                    estimatedCard = estimateCardinalityEq(
-                        *ceHist, queryTypeInfo.typeTag, sbeValLow[i].getValue(), includeScalar);
-                }
-
-                break;
-            }
-            case kRange: {
+            for (size_t i = 0; i < sbeValLow.size();) {
                 if (mongo::stats::compareValues(sbeValLow[i].getTag(),
                                                 sbeValLow[i].getValue(),
                                                 sbeValHigh[i].getTag(),
                                                 sbeValHigh[i].getValue()) >= 0) {
-                    continue;
+                    // Remove elements from both vectors
+                    sbeValLow.erase(sbeValLow.begin() + i);
+                    sbeValHigh.erase(sbeValHigh.begin() + i);
+                } else {
+                    // Only increment if no removal to avoid skipping elements
+                    ++i;
                 }
+            }
+            break;
+        }
+    }
 
+    std::vector<std::pair<stats::SBEValue, stats::SBEValue>> intervals;
+    for (size_t i = 0; i < sbeValLow.size(); ++i) {
+        if (queryType == kPoint) {
+            // Copy the first argument and move the second argument.
+            intervals.emplace_back(sbeValLow[i], std::move(sbeValLow[i]));
+        } else {
+            intervals.emplace_back(std::move(sbeValLow[i]), std::move(sbeValHigh[i]));
+        }
+    }
+    return intervals;
+}
+
+EstimationResult runSingleQuery(QueryType queryType,
+                                const stats::SBEValue& sbeValLow,
+                                const stats::SBEValue& sbeValHigh,
+                                const std::shared_ptr<const stats::CEHistogram>& ceHist,
+                                bool includeScalar,
+                                ArrayRangeEstimationAlgo arrayRangeEstimationAlgo,
+                                bool useE2EAPI,
+                                size_t size) {
+    EstimationResult estimatedCard;
+
+    switch (queryType) {
+        case kPoint: {
+            if (useE2EAPI) {
+                BSONObj bsonInterval = sbeValuesToInterval(sbeValLow, "", sbeValLow, "");
+
+                Interval interval(bsonInterval, true /*startIncluded*/, true /*endIncluded*/);
+
+                auto sizeCardinality =
+                    CardinalityEstimate{CardinalityType{(double)size}, EstimationSource::Histogram};
+
+                estimatedCard.card =
+                    HistogramEstimator::estimateCardinality(*ceHist,
+                                                            sizeCardinality,
+                                                            interval,
+                                                            includeScalar,
+                                                            ArrayRangeEstimationAlgo::kExactArrayCE)
+                        .toDouble();
+
+            } else {
+                // Estimate result.
+                estimatedCard = estimateCardinalityEq(
+                    *ceHist, sbeValLow.getTag(), sbeValLow.getValue(), includeScalar);
+            }
+
+            break;
+        }
+        case kRange: {
+            if (useE2EAPI) {
+                BSONObj bsonInterval = sbeValuesToInterval(sbeValLow, "", sbeValHigh, "");
+
+                Interval interval(bsonInterval, true /*startIncluded*/, true /*endIncluded*/);
+
+                auto sizeCardinality =
+                    CardinalityEstimate{CardinalityType{(double)size}, EstimationSource::Histogram};
+
+                estimatedCard.card =
+                    HistogramEstimator::estimateCardinality(*ceHist,
+                                                            sizeCardinality,
+                                                            interval,
+                                                            includeScalar,
+                                                            ArrayRangeEstimationAlgo::kExactArrayCE)
+                        .toDouble();
+            } else {
+                // Estimate result.
+                estimatedCard = estimateCardinalityRange(*ceHist,
+                                                         true /*lowInclusive*/,
+                                                         sbeValLow.getTag(),
+                                                         sbeValLow.getValue(),
+                                                         true /*highInclusive*/,
+                                                         sbeValHigh.getTag(),
+                                                         sbeValHigh.getValue(),
+                                                         includeScalar,
+                                                         arrayRangeEstimationAlgo);
+            }
+            break;
+        }
+    }
+    return estimatedCard;
+}
+
+ErrorCalculationSummary runQueries(size_t size,
+                                   size_t numberOfQueries,
+                                   QueryType queryType,
+                                   const std::pair<size_t, size_t> interval,
+                                   const TypeProbability queryTypeInfo,
+                                   const std::vector<stats::SBEValue>& data,
+                                   const std::shared_ptr<const stats::CEHistogram> ceHist,
+                                   bool includeScalar,
+                                   ArrayRangeEstimationAlgo arrayRangeEstimationAlgo,
+                                   bool useE2EAPI,
+                                   const size_t seed) {
+    double relativeErrorSum = 0, relativeErrorMax = 0;
+    ErrorCalculationSummary finalResults;
+
+    auto queryIntervals =
+        generateIntervals(queryType, interval, numberOfQueries, queryTypeInfo, seed);
+
+    for (size_t i = 0; i < numberOfQueries; i++) {
+        size_t actualCard;
+        EstimationResult estimatedCard = runSingleQuery(queryType,
+                                                        queryIntervals[i].first,
+                                                        queryIntervals[i].second,
+                                                        ceHist,
+                                                        includeScalar,
+                                                        arrayRangeEstimationAlgo,
+                                                        useE2EAPI,
+                                                        size);
+
+        switch (queryType) {
+            case kPoint: {
+                // Find actual frequency.
+                actualCard = calculateFrequencyFromDataVectorEq(
+                    data, queryIntervals[i].first, includeScalar);
+
+                break;
+            }
+            case kRange: {
                 // Find actual frequency.
                 actualCard = calculateFrequencyFromDataVectorRange(
-                    data, queryTypeInfo.typeTag, sbeValLow[i], sbeValHigh[i]);
-
-                if (useE2EAPI) {
-                    BSONObj bsonInterval = sbeValuesToInterval(sbeValLow[i], "", sbeValHigh[i], "");
-
-                    Interval interval(bsonInterval, true /*startIncluded*/, true /*endIncluded*/);
-
-                    auto sizeCardinality = CardinalityEstimate{CardinalityType{(double)size},
-                                                               EstimationSource::Histogram};
-
-                    estimatedCard.card = HistogramEstimator::estimateCardinality(
-                                             *ceHist, sizeCardinality, interval, includeScalar)
-                                             .toDouble();
-                } else {
-                    // Estimate result.
-                    estimatedCard = estimateCardinalityRange(*ceHist,
-                                                             true /*lowInclusive*/,
-                                                             queryTypeInfo.typeTag,
-                                                             sbeValLow[i].getValue(),
-                                                             true /*highInclusive*/,
-                                                             queryTypeInfo.typeTag,
-                                                             sbeValHigh[i].getValue(),
-                                                             includeScalar);
-                }
+                    data, queryIntervals[i].first, queryIntervals[i].second);
                 break;
             }
         }
@@ -491,6 +589,9 @@ ErrorCalculationSummary runQueries(size_t size,
             relativeErrorSum += abs(errors.second.get());
             relativeErrorMax = fmax(relativeErrorMax, abs(errors.second.get()));
         }
+
+        // Increment the number of executed queries.
+        ++finalResults.executedQueries;
     }
 
     // Store results over the whole dataset to final structure.
@@ -540,12 +641,13 @@ void runAccuracyTestConfiguration(const DataDistributionEnum dataDistribution,
                                   const int numberOfQueries,
                                   QueryType queryType,
                                   bool includeScalar,
+                                  ArrayRangeEstimationAlgo arrayRangeEstimationAlgo,
                                   bool useE2EAPI,
                                   const size_t seed,
                                   bool printResults,
                                   int arrayTypeLength) {
 
-    auto ndv = std::max((size_t)1, (size_t)((dataInterval.second - dataInterval.first) / 2));
+    auto ndv = std::max((size_t)1, (size_t)(dataInterval.second - dataInterval.first));
     for (auto numberOfBuckets : numberOfBucketsVector) {
         for (const auto& typeCombinationData : typeCombinationsData) {
             // Random value generator for actual data in histogram.
@@ -586,6 +688,7 @@ void runAccuracyTestConfiguration(const DataDistributionEnum dataDistribution,
                                         data,
                                         ceHist,
                                         includeScalar,
+                                        arrayRangeEstimationAlgo,
                                         useE2EAPI,
                                         seed);
                 if (printResults) {

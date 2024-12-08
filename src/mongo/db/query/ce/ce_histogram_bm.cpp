@@ -35,7 +35,7 @@
 
 namespace mongo::ce {
 
-enum DataType { kInt, kStringSmall, kString, kDouble };
+enum DataType { kInt, kStringSmall, kString, kDouble, kBoolean, kNull, kNan, kArray };
 
 struct HistogramEstimationBenchmarkConfiguration {
     int numberOfBuckets;
@@ -43,15 +43,22 @@ struct HistogramEstimationBenchmarkConfiguration {
     DataDistributionEnum dataDistribution;
     DataType dataType;
     QueryType queryType;
+
+    // Inclusive minimum and maximum bounds for randomly generated data, ensuring each data falls
+    // within these limits.
     std::pair<size_t, size_t> dataInterval;
     sbe::value::TypeTags sbeDataType;
+    double nanProb = 0;
+    size_t arrayTypeLength = 0;
+    bool useE2EAPI = false;
 
     HistogramEstimationBenchmarkConfiguration(benchmark::State& state)
         : numberOfBuckets(state.range(0)),
           size(state.range(1)),
           dataDistribution(static_cast<DataDistributionEnum>(state.range(2))),
           dataType(static_cast<DataType>(state.range(3))),
-          queryType(static_cast<QueryType>(state.range(4))) {
+          queryType(static_cast<QueryType>(state.range(4))),
+          useE2EAPI(static_cast<bool>(state.range(5))) {
         switch (dataType) {
             case kInt:
                 sbeDataType = sbe::value::TypeTags::NumberInt64;
@@ -69,6 +76,24 @@ struct HistogramEstimationBenchmarkConfiguration {
                 sbeDataType = sbe::value::TypeTags::NumberDouble;
                 dataInterval = {0, 1000};
                 break;
+            case kBoolean:
+                sbeDataType = sbe::value::TypeTags::Boolean;
+                dataInterval = {0, 2};
+                break;
+            case kNull:
+                sbeDataType = sbe::value::TypeTags::Null;
+                dataInterval = {0, 1000};
+                break;
+            case kNan:
+                sbeDataType = sbe::value::TypeTags::NumberDouble;
+                dataInterval = {0, 1000};
+                nanProb = 1;
+                break;
+            case kArray:
+                sbeDataType = sbe::value::TypeTags::Array;
+                dataInterval = {0, 1000};
+                arrayTypeLength = 10;
+                break;
         }
     }
 };
@@ -81,7 +106,6 @@ void BM_CreateHistogram(benchmark::State& state) {
 
     std::vector<stats::SBEValue> data;
     const size_t seed = 1724178214;
-    TypeCounts typeCounts;
 
     auto ndv = (configuration.dataInterval.second - configuration.dataInterval.first) / 2;
     // Create one by one the values.
@@ -93,7 +117,8 @@ void BM_CreateHistogram(benchmark::State& state) {
                                 typeCombinationData,
                                 seed,
                                 ndv,
-                                data);
+                                data,
+                                configuration.arrayTypeLength);
             break;
         case kNormal:
             // For ndv we set half the number of values in the provided data interval.
@@ -102,7 +127,8 @@ void BM_CreateHistogram(benchmark::State& state) {
                                typeCombinationData,
                                seed,
                                ndv,
-                               data);
+                               data,
+                               configuration.arrayTypeLength);
             break;
         case kZipfian:
             // For ndv we set half the number of values in the provided data interval.
@@ -111,7 +137,8 @@ void BM_CreateHistogram(benchmark::State& state) {
                                 typeCombinationData,
                                 seed,
                                 ndv,
-                                data);
+                                data,
+                                configuration.arrayTypeLength);
             break;
     }
 
@@ -125,11 +152,11 @@ void BM_RunHistogramEstimations(benchmark::State& state) {
 
     HistogramEstimationBenchmarkConfiguration configuration(state);
 
-    const TypeCombination typeCombinationData{TypeCombination{{configuration.sbeDataType, 100}}};
+    const TypeCombination typeCombinationData{
+        TypeCombination{{configuration.sbeDataType, 100, configuration.nanProb}}};
 
     std::vector<stats::SBEValue> data;
     const size_t seed = 1724178214;
-    TypeCounts typeCounts;
     const int numberOfQueries = 100;
 
     auto ndv = (configuration.dataInterval.second - configuration.dataInterval.first) / 2;
@@ -143,7 +170,8 @@ void BM_RunHistogramEstimations(benchmark::State& state) {
                                 typeCombinationData,
                                 seed,
                                 ndv,
-                                data);
+                                data,
+                                configuration.arrayTypeLength);
             break;
         case kNormal:
             // For ndv we set half the number of values in the provided data interval.
@@ -152,7 +180,8 @@ void BM_RunHistogramEstimations(benchmark::State& state) {
                                typeCombinationData,
                                seed,
                                ndv,
-                               data);
+                               data,
+                               configuration.arrayTypeLength);
             break;
         case kZipfian:
             // For ndv we set half the number of values in the provided data interval.
@@ -161,154 +190,67 @@ void BM_RunHistogramEstimations(benchmark::State& state) {
                                 typeCombinationData,
                                 seed,
                                 ndv,
-                                data);
+                                data,
+                                configuration.arrayTypeLength);
             break;
     }
 
     // Build histogram.
     auto ceHist = stats::createCEHistogram(data, configuration.numberOfBuckets);
 
-    TypeProbability typeCombinationQuery{configuration.sbeDataType, 100};
-
-    for (auto curState : state) {
-        runQueries(configuration.size,
-                   numberOfQueries,
-                   configuration.queryType,
-                   configuration.dataInterval,
-                   typeCombinationQuery,
-                   data,
-                   ceHist,
-                   true /*includeScalar*/,
-                   false /*useE2EAPI*/,
-                   seed);
+    TypeProbability typeCombinationQuery{configuration.sbeDataType, 100, configuration.nanProb};
+    if (configuration.dataType == kArray) {
+        // The array data generation currently only supports integer elements as implemented in
+        // populateTypeDistrVectorAccordingToInputConfig.
+        typeCombinationQuery.typeTag = sbe::value::TypeTags::NumberInt64;
     }
+
+    auto queryIntervals = generateIntervals(configuration.queryType,
+                                            configuration.dataInterval,
+                                            numberOfQueries,
+                                            typeCombinationQuery,
+                                            seed);
+    tassert(9787300, "queryIntervals should have at least one interval", queryIntervals.size() > 0);
+    size_t i = 0;
+    for (auto curState : state) {
+        benchmark::DoNotOptimize(runSingleQuery(configuration.queryType,
+                                                queryIntervals[i].first,
+                                                queryIntervals[i].second,
+                                                ceHist,
+                                                true /*includeScalar*/,
+                                                ArrayRangeEstimationAlgo::kConjunctArrayCE,
+                                                false /*useE2EAPI*/,
+                                                seed));
+        i = (i + 1) % queryIntervals.size();
+    }
+    state.SetItemsProcessed(state.iterations());
 }
 
-
 BENCHMARK(BM_CreateHistogram)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kUniform,
-            /*dataType*/ kInt,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_CreateHistogram)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kNormal,
-            /*dataType*/ kInt,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_CreateHistogram)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kZipfian,
-            /*dataType*/ kInt,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_CreateHistogram)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kUniform,
-            /*dataType*/ kString,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_CreateHistogram)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kNormal,
-            /*dataType*/ kString,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_CreateHistogram)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kZipfian,
-            /*dataType*/ kString,
-            /*queryType*/ kPoint});
+    ->ArgNames({"buckets", "size", "distrib", "dataType", "query", "useE2EAPI"})
+    ->ArgsProduct({/*numberOfBuckets*/ {10, 100, 300},
+                   /*size*/ {50'000, 100'000},
+                   /*dataDistribution*/ {kUniform, kNormal, kZipfian},
+                   /*dataType*/ {kInt, kString, kBoolean, kNull, kNan, kArray},
+                   /*queryType*/ {kPoint},
+                   /*useE2EAPI*/ {0}});
 
 BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kUniform,
-            /*dataType*/ kInt,
-            /*queryType*/ kPoint});
+    ->ArgNames({"buckets", "size", "distrib", "dataType", "query", "useE2EAPI"})
+    ->ArgsProduct({/*numberOfBuckets*/ {10, 100, 300},
+                   /*size*/ {50'000},
+                   /*dataDistribution*/ {kUniform, kZipfian},
+                   /*dataType*/ {kInt, kString, kBoolean, kNull, kNan, kArray},
+                   /*queryType*/ {kPoint},
+                   /*useE2EAPI*/ {0, 1}});
 
 BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kUniform,
-            /*dataType*/ kString,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kUniform,
-            /*dataType*/ kInt,
-            /*queryType*/ kRange});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kUniform,
-            /*dataType*/ kString,
-            /*queryType*/ kRange});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kNormal,
-            /*dataType*/ kInt,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kNormal,
-            /*dataType*/ kString,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kNormal,
-            /*dataType*/ kInt,
-            /*queryType*/ kRange});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kNormal,
-            /*dataType*/ kString,
-            /*queryType*/ kRange});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kZipfian,
-            /*dataType*/ kInt,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kZipfian,
-            /*dataType*/ kString,
-            /*queryType*/ kPoint});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kZipfian,
-            /*dataType*/ kInt,
-            /*queryType*/ kRange});
-
-BENCHMARK(BM_RunHistogramEstimations)
-    ->Args({/*numberOfBuckets*/ 10,
-            /*size*/ 50000,
-            /*dataDistribution*/ kZipfian,
-            /*dataType*/ kString,
-            /*queryType*/ kRange});
+    ->ArgNames({"buckets", "size", "distrib", "dataType", "query", "useE2EAPI"})
+    ->ArgsProduct({/*numberOfBuckets*/ {10, 100, 300},
+                   /*size*/ {50'000},
+                   /*dataDistribution*/ {kUniform, kZipfian},
+                   /*dataType*/ {kInt, kString, kBoolean, kArray},
+                   /*queryType*/ {kRange},
+                   /*useE2EAPI*/ {0, 1}});
 
 }  // namespace mongo::ce
