@@ -131,7 +131,6 @@ variables:
       - func: "save mongo coredumps"
       - func: "generate hang analyzer tasks"
       - func: "save failed unittests"
-      - func: "save UndoDB recordings"
       - func: "save unstripped dbtest"
       - func: "save hang analyzer debugger files"
       - func: "save disk statistics"
@@ -798,6 +797,7 @@ tasks:
     depends_on:
       - name: version_expansions_gen
         variant: generate-tasks-for-version
+      - name: compile_libraries_for_unittests
     commands:
       - func: "do scons setup"
       - func: "scons compile"
@@ -805,6 +805,7 @@ tasks:
           targets: install-sdam-json-test
           compiling_for_test: true
           install_dir: build/install/bin
+          bazel_build_tags: --bazel-build-tag=mongo_binary
       - func: "run tests"
         vars:
           suite: sdam_json_test
@@ -820,6 +821,7 @@ tasks:
     depends_on:
       - name: version_expansions_gen
         variant: generate-tasks-for-version
+      - name: compile_libraries_for_unittests
     commands:
       - func: "do scons setup"
       - func: "scons compile"
@@ -827,6 +829,7 @@ tasks:
           targets: install-server-selection-json-test
           compiling_for_test: true
           install_dir: build/install/bin
+          bazel_build_tags: --bazel-build-tag=mongo_binary
       - func: "run tests"
 
   - <<: *task_template
@@ -1576,7 +1579,8 @@ tasks:
           retryable_writes_downgrade_last_continuous: last_continuous
       - func: "generate resmoke tasks"
         vars:
-          run_no_feature_flag_tests: "true"
+          resmoke_args: >-
+            --runNoFeatureFlagTests
 
   - <<: *gen_task_template
     name: retryable_writes_jscore_passthrough_gen
@@ -1749,7 +1753,8 @@ tasks:
           sharded_collections_jscore_passthrough_last_lts_new_old_old_new: last_lts
       - func: "generate resmoke tasks"
         vars:
-          run_no_feature_flag_tests: "true"
+          resmoke_args: >-
+            --runNoFeatureFlagTests
 
   - <<: *gen_task_template
     name: sharded_collections_jscore_passthrough_gen
@@ -1904,7 +1909,8 @@ tasks:
           sharded_retryable_writes_downgrade_last_lts_new_old_old_new: last_lts
       - func: "generate resmoke tasks"
         vars:
-          run_no_feature_flag_tests: "true"
+          resmoke_args: >-
+            --runNoFeatureFlagTests
 
   - <<: *gen_task_template
     name: sharding_auto_bootstrap_gen
@@ -1989,7 +1995,8 @@ tasks:
           sharding_jscore_passthrough_last_continuous_new_old_old_new: last_continuous
       - func: "generate resmoke tasks"
         vars:
-          run_no_feature_flag_tests: "true"
+          resmoke_args: >-
+            --runNoFeatureFlagTests
 
   - <<: *gen_task_template
     name: sharding_jscore_passthrough_gen
@@ -2086,7 +2093,8 @@ tasks:
       - func: "generate resmoke tasks"
         vars:
           use_large_distro: "true"
-          run_no_feature_flag_tests: "true"
+          resmoke_args: >-
+            --runNoFeatureFlagTests
 
   - <<: *jstestfuzz_template
     name: unshard_collection_fuzzer_gen
@@ -2762,9 +2770,10 @@ tasks:
         vars:
           <<: *jstestfuzz_config_vars
           jstestfuzz_vars: --jsTestsDir ../jstests
-          resmoke_args: "--mongodSetParameters='{logComponentVerbosity: {command: 2}}'"
+          resmoke_args: >-
+            --mongodSetParameters='{logComponentVerbosity: {command: 2}}'
+            --runNoFeatureFlagTests
           npm_command: jstestfuzz
-          run_no_feature_flag_tests: "true"
 
   ## jstestfuzz sharded cluster with notablescan param enabled ##
   - <<: *jstestfuzz_template

@@ -35,12 +35,11 @@
 #include "mongo/db/pipeline/document_source.h"
 #include "mongo/db/pipeline/document_source_score.h"
 #include "mongo/db/pipeline/document_source_score_gen.h"
-#include "mongo/db/pipeline/document_source_single_document_transformation.h"
+#include "mongo/db/pipeline/document_source_set_metadata.h"
 #include "mongo/db/pipeline/expression.h"
 #include "mongo/db/pipeline/expression_context.h"
 #include "mongo/db/pipeline/expression_dependencies.h"
 #include "mongo/db/pipeline/lite_parsed_document_source.h"
-#include "mongo/db/pipeline/set_metadata_transformation.h"
 #include "mongo/db/query/allowed_contexts.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
@@ -92,11 +91,12 @@ intrusive_ptr<Expression> buildMetadataExpression(const intrusive_ptr<Expression
 
 intrusive_ptr<DocumentSource> DocumentSourceScore::createFromBson(
     BSONElement elem, const intrusive_ptr<ExpressionContext>& pExpCtx) {
-    uassert(ErrorCodes::QueryFeatureNotAllowed,
-            "$score is not allowed in the current configuration. You may need to enable the "
-            "correponding feature flag",
-            feature_flags::gFeatureFlagSearchHybridScoring.isEnabledUseLatestFCVWhenUninitialized(
-                serverGlobalParams.featureCompatibility.acquireFCVSnapshot()));
+    uassert(
+        ErrorCodes::QueryFeatureNotAllowed,
+        "$score is not allowed in the current configuration. You may need to enable the "
+        "correponding feature flag",
+        feature_flags::gFeatureFlagSearchHybridScoringFull.isEnabledUseLatestFCVWhenUninitialized(
+            serverGlobalParams.featureCompatibility.acquireFCVSnapshot()));
     uassert(ErrorCodes::FailedToParse,
             str::stream() << "The " << kStageName
                           << " stage specification must be an object, found "
@@ -106,13 +106,8 @@ intrusive_ptr<DocumentSource> DocumentSourceScore::createFromBson(
 
     boost::intrusive_ptr<Expression> expr = buildMetadataExpression(pExpCtx, spec);
 
-    const bool isIndependentOfAnyCollection = false;
-    return make_intrusive<DocumentSourceSingleDocumentTransformation>(
-        pExpCtx,
-        std::make_unique<SetMetadataTransformation>(
-            pExpCtx, std::move(expr), DocumentMetadataFields::MetaType::kScore),
-        kStageName,
-        isIndependentOfAnyCollection);
+    return DocumentSourceSetMetadata::create(
+        pExpCtx, std::move(expr), DocumentMetadataFields::MetaType::kScore);
 }
 
 }  // namespace mongo

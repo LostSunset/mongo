@@ -93,7 +93,9 @@ vector<pair<string, vector<BSONObj>>> extractRawPipelines(const BSONElement& ele
     vector<pair<string, vector<BSONObj>>> rawFacetPipelines;
     for (auto&& facetElem : elem.embeddedObject()) {
         const auto facetName = facetElem.fieldNameStringData();
-        FieldPath::uassertValidFieldName(facetName);
+        uassertStatusOKWithContext(
+            FieldPath::validateFieldName(facetName),
+            "$facet pipeline names must follow the naming rules of field path expressions.");
         uassert(40170,
                 str::stream() << "arguments to $facet must be arrays, " << facetName << " is type "
                               << typeName(facetElem.type()),
@@ -150,7 +152,7 @@ std::unique_ptr<DocumentSourceFacet::LiteParsed> DocumentSourceFacet::LiteParsed
     std::vector<LiteParsedPipeline> liteParsedPipelines;
 
     for (auto&& rawPipeline : extractRawPipelines(spec)) {
-        liteParsedPipelines.emplace_back(LiteParsedPipeline(nss, rawPipeline.second));
+        liteParsedPipelines.emplace_back(nss, rawPipeline.second);
     }
 
     return std::make_unique<DocumentSourceFacet::LiteParsed>(spec.fieldName(),

@@ -46,7 +46,6 @@
 #include "mongo/db/timeseries/bucket_catalog/rollover.h"
 #include "mongo/db/timeseries/timeseries_constants.h"
 #include "mongo/platform/compiler.h"
-#include "mongo/stdx/unordered_map.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/tracking/context.h"
@@ -68,7 +67,6 @@ void prepareWriteBatchForCommit(TrackingContexts& trackingContexts,
                                 WriteBatch& batch,
                                 Bucket& bucket,
                                 const StringDataComparator* comparator) {
-    invariant(batch.commitRights.load());
     batch.numPreviouslyCommittedMeasurements = bucket.numCommittedMeasurements;
 
     // Filter out field names that were new at the time of insertion, but have since been committed
@@ -115,7 +113,6 @@ void prepareWriteBatchForCommit(TrackingContexts& trackingContexts,
  * Must have commit rights. Inactive batches only.
  */
 void finishWriteBatch(WriteBatch& batch, const CommitInfo& info) {
-    invariant(batch.commitRights.load());
     batch.promise.emplaceValue(info);
 }
 
@@ -253,7 +250,6 @@ StatusWith<InsertResult> tryInsert(BucketCatalog& catalog,
                                    const StringDataComparator* comparator,
                                    const BSONObj& doc,
                                    OperationId opId,
-                                   CombineWithInsertsFromOtherClients combine,
                                    InsertContext& insertContext,
                                    const Date_t& time,
                                    uint64_t storageCacheSizeBytes) {
@@ -294,7 +290,6 @@ StatusWith<InsertResult> tryInsert(BucketCatalog& catalog,
                                             stripeLock,
                                             doc,
                                             opId,
-                                            combine,
                                             internal::AllowBucketCreation::kNo,
                                             insertContext,
                                             *bucket,
@@ -323,7 +318,6 @@ StatusWith<InsertResult> tryInsert(BucketCatalog& catalog,
                                                stripeLock,
                                                doc,
                                                opId,
-                                               combine,
                                                internal::AllowBucketCreation::kNo,
                                                insertContext,
                                                *alternate,
@@ -360,7 +354,6 @@ StatusWith<InsertResult> insertWithReopeningContext(BucketCatalog& catalog,
                                                     const StringDataComparator* comparator,
                                                     const BSONObj& doc,
                                                     OperationId opId,
-                                                    CombineWithInsertsFromOtherClients combine,
                                                     ReopeningContext& reopeningContext,
                                                     InsertContext& insertContext,
                                                     const Date_t& time,
@@ -425,7 +418,6 @@ StatusWith<InsertResult> insertWithReopeningContext(BucketCatalog& catalog,
                                                     stripeLock,
                                                     doc,
                                                     opId,
-                                                    combine,
                                                     internal::AllowBucketCreation::kYes,
                                                     insertContext,
                                                     bucket,
@@ -459,7 +451,6 @@ StatusWith<InsertResult> insertWithReopeningContext(BucketCatalog& catalog,
                                             stripeLock,
                                             doc,
                                             opId,
-                                            combine,
                                             internal::AllowBucketCreation::kYes,
                                             insertContext,
                                             *bucket,
@@ -475,7 +466,6 @@ StatusWith<InsertResult> insert(BucketCatalog& catalog,
                                 const StringDataComparator* comparator,
                                 const BSONObj& doc,
                                 OperationId opId,
-                                CombineWithInsertsFromOtherClients combine,
                                 InsertContext& insertContext,
                                 const Date_t& time,
                                 uint64_t storageCacheSizeBytes) {
@@ -496,7 +486,6 @@ StatusWith<InsertResult> insert(BucketCatalog& catalog,
                                             stripeLock,
                                             doc,
                                             opId,
-                                            combine,
                                             internal::AllowBucketCreation::kYes,
                                             insertContext,
                                             *bucket,
@@ -667,7 +656,6 @@ boost::optional<ClosedBucket> finish(
 
 void abort(BucketCatalog& catalog, std::shared_ptr<WriteBatch> batch, const Status& status) {
     invariant(batch);
-    invariant(batch->commitRights.load());
 
     if (isWriteBatchFinished(*batch)) {
         return;
@@ -784,13 +772,6 @@ void appendExecutionStats(const BucketCatalog& catalog,
     if (stats) {
         appendExecutionStatsToBuilder(*stats, builder);
     }
-}
-
-void reportMeasurementsGroupCommitted(BucketCatalog& catalog,
-                                      const UUID& collectionUUID,
-                                      int64_t count) {
-    auto stats = internal::getOrInitializeExecutionStats(catalog, collectionUUID);
-    stats.incNumMeasurementsGroupCommitted(count);
 }
 
 StatusWith<std::tuple<InsertContext, Date_t>> prepareInsert(BucketCatalog& catalog,

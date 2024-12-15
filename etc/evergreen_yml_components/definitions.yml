@@ -2544,32 +2544,6 @@ functions:
       content_type: application/gzip
       display_name: Bazel JVM dump
 
-  "tar UndoDB recordings": &tar_undodb_recordings
-    command: archive.targz_pack
-    params:
-      target: undodb-recordings.tgz
-      source_dir: src
-      include:
-        - "./*.undo.tokeep"
-        - "./*.undo"
-
-  "archive UndoDB recordings": &archive_undodb_recordings
-    command: s3.put
-    params:
-      aws_key: ${aws_key}
-      aws_secret: ${aws_secret}
-      local_file: undodb-recordings.tgz
-      remote_file: ${project}/${build_variant}/${revision}/undo/undodb-recordings-${task_id}-execution-${execution}.tgz
-      bucket: mciuploads
-      permissions: public-read
-      content_type: application/gzip
-      display_name: UndoDB Recordings - Execution ${execution}
-      optional: true
-
-  "save UndoDB recordings":
-    - *tar_undodb_recordings
-    - *archive_undodb_recordings
-
   ### Attach report & artifacts ###
   "attach scons config logs": &attach_scons_config_logs
     command: s3.put
@@ -2876,6 +2850,15 @@ functions:
         - "./src/evergreen/functions/download_pgo_profile.sh"
       env:
         PGO_PROFILE_URL: ${pgo_profile_url}
+
+  "BOLT":
+    command: subprocess.exec
+    params:
+      binary: bash
+      args:
+        - "./src/evergreen/functions/bolt.sh"
+      env:
+        BOLT: ${bolt}
 
   "process code coverage data": &process_code_coverage_data
     command: subprocess.exec

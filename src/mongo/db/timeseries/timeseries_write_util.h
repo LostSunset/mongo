@@ -44,7 +44,6 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/query/write_ops/write_ops_gen.h"
-#include "mongo/db/query/write_ops/write_ops_parsers.h"
 #include "mongo/db/record_id.h"
 #include "mongo/db/repl/optime.h"
 #include "mongo/db/session/logical_session_id.h"
@@ -52,8 +51,8 @@
 #include "mongo/db/timeseries/bucket_catalog/write_batch.h"
 #include "mongo/db/timeseries/timeseries_gen.h"
 #include "mongo/db/timeseries/timeseries_index_schema_conversion_functions.h"
-#include "mongo/db/timeseries/write_ops/measurement.h"
 #include "mongo/stdx/unordered_map.h"
+#include "mongo/stdx/unordered_set.h"
 
 namespace mongo::timeseries {
 
@@ -108,7 +107,6 @@ StatusWith<timeseries::bucket_catalog::InsertResult> attemptInsertIntoBucket(
     TimeseriesOptions& timeSeriesOptions,
     const BSONObj& measurementDoc,
     BucketReopeningPermittance,
-    bucket_catalog::CombineWithInsertsFromOtherClients combine,
     const CompressAndWriteBucketFunc& compressAndWriteBucketFunc);
 
 /**
@@ -117,12 +115,14 @@ StatusWith<timeseries::bucket_catalog::InsertResult> attemptInsertIntoBucket(
 template <typename T, typename Fn>
 std::vector<std::reference_wrapper<std::shared_ptr<timeseries::bucket_catalog::WriteBatch>>>
 determineBatchesToCommit(T& batches, Fn&& extractElem) {
+    stdx::unordered_set<bucket_catalog::WriteBatch*> processedBatches;
     std::vector<std::reference_wrapper<std::shared_ptr<timeseries::bucket_catalog::WriteBatch>>>
         batchesToCommit;
     for (auto& elem : batches) {
         std::shared_ptr<timeseries::bucket_catalog::WriteBatch>& batch = extractElem(elem);
-        if (timeseries::bucket_catalog::claimWriteBatchCommitRights(*batch)) {
+        if (!processedBatches.contains(batch.get())) {
             batchesToCommit.push_back(batch);
+            processedBatches.insert(batch.get());
         }
     }
 

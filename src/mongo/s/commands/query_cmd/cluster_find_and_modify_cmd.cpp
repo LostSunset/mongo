@@ -129,15 +129,7 @@ BSONObj appendLegacyRuntimeConstantsToCommandObject(OperationContext* opCtx,
 }
 
 BSONObj stripWriteConcern(const BSONObj& cmdObj) {
-    BSONObjBuilder output;
-    for (const auto& elem : cmdObj) {
-        const auto name = elem.fieldNameStringData();
-        if (name == WriteConcernOptions::kWriteConcernField) {
-            continue;
-        }
-        output.append(elem);
-    }
-    return output.obj();
+    return cmdObj.removeField(WriteConcernOptions::kWriteConcernField);
 }
 
 BSONObj getCollation(const BSONObj& cmdObj) {
@@ -290,7 +282,7 @@ void updateReplyOnWouldChangeOwningShardSuccess(bool matchedDocOrUpserted,
 
 void handleWouldChangeOwningShardErrorTransaction(OperationContext* opCtx,
                                                   const NamespaceString nss,
-                                                  Status responseStatus,
+                                                  const Status& responseStatus,
                                                   bool shouldReturnPostImage,
                                                   BSONObjBuilder* result,
                                                   bool fleCrudProcessed) {
@@ -354,7 +346,7 @@ void handleWouldChangeOwningShardErrorTransaction(OperationContext* opCtx,
 
 void handleWouldChangeOwningShardErrorTransactionLegacy(OperationContext* opCtx,
                                                         const NamespaceString nss,
-                                                        Status responseStatus,
+                                                        const Status& responseStatus,
                                                         const BSONObj& cmdObj,
                                                         BSONObjBuilder* result,
                                                         bool isTimeseriesViewRequest,
@@ -574,7 +566,6 @@ ShardId targetSingleShard(boost::intrusive_ptr<ExpressionContext> expCtx,
                         collation,
                         cm,
                         &shardIds,
-                        nullptr,
                         true);
 
     uassert(ErrorCodes::ShardKeyNotFound,
@@ -925,14 +916,14 @@ void FindAndModifyCmd::_constructResult(OperationContext* opCtx,
         return;
     }
 
-    // Throw if a non-OK status is not because of any of the above errors.
-    uassertStatusOK(responseStatus);
-
     // First append the properly constructed writeConcernError. It will then be skipped in
     // appendElementsUnique.
     if (auto wcErrorElem = response["writeConcernError"]) {
         appendWriteConcernErrorToCmdResponse(shardId, wcErrorElem, *result);
     }
+
+    // Throw if a non-OK status is not because of any of the above errors.
+    uassertStatusOK(responseStatus);
 
     result->appendElementsUnique(CommandHelpers::filterCommandReplyForPassthrough(response));
 }
@@ -1148,10 +1139,11 @@ void FindAndModifyCmd::_handleWouldChangeOwningShardErrorRetryableWriteLegacy(
         uassertStatusOK(getStatusFromCommandResult(result->asTempObj()));
         auto commitResponse = documentShardKeyUpdateUtil::commitShardKeyUpdateTransaction(opCtx);
 
-        uassertStatusOK(getStatusFromCommandResult(commitResponse));
         if (auto wcErrorElem = commitResponse["writeConcernError"]) {
             appendWriteConcernErrorToCmdResponse(shardId, wcErrorElem, *result);
         }
+
+        uassertStatusOK(getStatusFromCommandResult(commitResponse));
     } catch (DBException& e) {
         if (e.code() != ErrorCodes::DuplicateKey ||
             (e.code() == ErrorCodes::DuplicateKey &&
@@ -1171,7 +1163,7 @@ void FindAndModifyCmd::handleWouldChangeOwningShardError(OperationContext* opCtx
                                                          const ShardId& shardId,
                                                          const NamespaceString& nss,
                                                          const BSONObj& cmdObj,
-                                                         Status responseStatus,
+                                                         const Status& responseStatus,
                                                          BSONObjBuilder* result) {
     auto txnRouter = TransactionRouter::get(opCtx);
     bool isRetryableWrite = opCtx->getTxnNumber() && !txnRouter;

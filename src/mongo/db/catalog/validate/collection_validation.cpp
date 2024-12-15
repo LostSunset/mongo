@@ -125,11 +125,11 @@ void _validateIndexesInternalStructure(OperationContext* opCtx,
         const IndexDescriptor* descriptor = entry->descriptor();
         const IndexAccessMethod* iam = entry->accessMethod();
 
-        LOGV2_OPTIONS(20295,
-                      {LogComponent::kIndex},
-                      "Validating internal structure",
-                      "index"_attr = descriptor->indexName(),
-                      logAttrs(validateState->nss()));
+        LOGV2_PROD_ONLY_OPTIONS(20295,
+                                {LogComponent::kIndex},
+                                "Validating internal structure",
+                                "index"_attr = descriptor->indexName(),
+                                logAttrs(validateState->nss()));
 
         auto indexResults = iam->validate(opCtx, *validateState);
 
@@ -158,11 +158,11 @@ void _validateIndexes(OperationContext* opCtx,
                                           ->findIndexByIdent(opCtx, indexIdent)
                                           ->indexName();
 
-        LOGV2_OPTIONS(20296,
-                      {LogComponent::kIndex},
-                      "Validating index consistency",
-                      "index"_attr = indexName,
-                      logAttrs(validateState->nss()));
+        LOGV2_PROD_ONLY_OPTIONS(20296,
+                                {LogComponent::kIndex},
+                                "Validating index consistency",
+                                "index"_attr = indexName,
+                                logAttrs(validateState->nss()));
 
         int64_t numTraversedKeys;
         indexValidator->traverseIndex(opCtx,
@@ -198,6 +198,9 @@ void _gatherIndexEntryErrors(OperationContext* opCtx,
     // the keys that were inconsistent during the first phase of validation.
     {
         ValidateResults tempValidateResults;
+        // Second phase doesn't report errors, but needs to know which indexes are structurally
+        // sound enough to validate
+        tempValidateResults.getIndexResultsMap() = result->getIndexResultsMap();
         indexValidator->traverseRecordStore(
             opCtx, &tempValidateResults, validateState->validationVersion());
     }
@@ -213,6 +216,14 @@ void _gatherIndexEntryErrors(OperationContext* opCtx,
 
         const IndexDescriptor* descriptor =
             validateState->getCollection()->getIndexCatalog()->findIndexByIdent(opCtx, indexIdent);
+
+        const auto& indexValidateResult = result->getIndexValidateResult(descriptor->indexName());
+        if (!indexValidateResult.continueValidation()) {
+            LOGV2(7697700,
+                  "Skipping validation of index due to existing errors",
+                  "indexName"_attr = descriptor->indexName());
+            continue;
+        }
 
         LOGV2_OPTIONS(20300,
                       {LogComponent::kIndex},
@@ -248,7 +259,7 @@ void _validateIndexKeyCount(OperationContext* opCtx,
             validateState->getCollection()->getIndexCatalog()->findIndexByIdent(opCtx, indexIdent);
         auto& curIndexResults = (*indexNsResultsMap)[descriptor->indexName()];
 
-        if (curIndexResults.isValid()) {
+        if (curIndexResults.continueValidation()) {
             indexValidator->validateIndexKeyCount(opCtx, descriptor->getEntry(), curIndexResults);
         }
     }

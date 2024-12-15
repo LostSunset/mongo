@@ -34,7 +34,6 @@ executor:
     enable_balancer: true
     mongod_options:
       set_parameters:
-        defaultConfigCommandTimeoutMS: 90000
         enableTestCommands: 1
         failpoint.overrideDDLLockTimeout:
           data:
@@ -65,7 +64,7 @@ executor:
 matrix_suite: true
 selector:
   exclude_files:
-    - jstests/concurrency/fsm_workloads/drop_index_during_replan.js
+    - jstests/concurrency/fsm_workloads/query/drop_index_during_replan.js
     - jstests/concurrency/fsm_workloads/query/drop_index_during_lookup.js
     - jstests/concurrency/fsm_workloads/query/update/update_rename.js
     - jstests/concurrency/fsm_workloads/query/update/update_rename_noindex.js

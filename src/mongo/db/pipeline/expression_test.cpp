@@ -59,6 +59,7 @@
 #include "mongo/logv2/log.h"
 #include "mongo/logv2/log_attr.h"
 #include "mongo/logv2/log_component.h"
+#include "mongo/platform/compiler.h"
 #include "mongo/platform/decimal128.h"
 #include "mongo/unittest/assert.h"
 #include "mongo/unittest/framework.h"
@@ -1822,7 +1823,10 @@ public:
             }
         }
         if (!spec["error"].missing()) {
+            MONGO_COMPILER_DIAGNOSTIC_PUSH
+            MONGO_COMPILER_DIAGNOSTIC_IGNORED_TRANSITIONAL("-Wdangling-reference")
             const vector<Value>& asserters = spec["error"].getArray();
+            MONGO_COMPILER_DIAGNOSTIC_POP
             size_t n = asserters.size();
             for (size_t i = 0; i < n; i++) {
                 const BSONObj obj = BSON(asserters[i].getString() << args);
@@ -2884,7 +2888,10 @@ public:
             }
         }
         if (!spec["error"].missing()) {
+            MONGO_COMPILER_DIAGNOSTIC_PUSH
+            MONGO_COMPILER_DIAGNOSTIC_IGNORED_TRANSITIONAL("-Wdangling-reference")
             const vector<Value>& asserters = spec["error"].getArray();
+            MONGO_COMPILER_DIAGNOSTIC_POP
             size_t n = asserters.size();
             for (size_t i = 0; i < n; i++) {
                 const BSONObj obj = BSON(asserters[i].getString() << args);
@@ -3176,7 +3183,7 @@ TEST(ExpressionMetaTest, ExpressionMetaScoreFFNotEnabled) {
     APIParameters::get(expCtx.getOperationContext()).setAPIStrict(false);
     VariablesParseState vps = expCtx.variablesParseState;
     BSONObj expr = fromjson("{$meta: \"score\"}");
-    // Should throw because 'featureFlagSearchHybridScoringPrerequisites' is not enabled.
+    // Should throw because 'featureFlagRankFusionFull' is not enabled.
     ASSERT_THROWS_CODE(ExpressionMeta::parse(&expCtx, expr.firstElement(), vps),
                        AssertionException,
                        ErrorCodes::FailedToParse);
@@ -3342,7 +3349,7 @@ TEST(ExpressionMetaTest, ExpressionMetaVectorSearchScore) {
 TEST(ExpressionMetaTest, ExpressionMetaScore) {
     // Used to set 'score' metadata.
     RAIIServerParameterControllerForTest searchHybridScoringPrerequisitesController(
-        "featureFlagSearchHybridScoringPrerequisites", true);
+        "featureFlagRankFusionFull", true);
     auto expCtx = ExpressionContextForTest{};
     BSONObj expr = fromjson("{$meta: \"score\"}");
     auto expressionMeta =

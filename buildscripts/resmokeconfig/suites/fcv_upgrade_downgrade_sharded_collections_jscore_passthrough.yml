@@ -111,7 +111,6 @@ selector:
     - jstests/core/query/and/and2.js
     - jstests/core/query/cursor/getmore_invalidated_documents.js
     - jstests/core/query/explain/explain_multi_plan.js
-    - jstests/core/query/explain/explain_upsert.js
     - jstests/core/query/inc/inc-SERVER-7446.js
     - jstests/core/query/inc/inc3.js
     - jstests/core/query/pull/pull.js
@@ -257,8 +256,9 @@ selector:
     # TODO: SERVER-78068 Remove Feature Flag for PM-2983
     - featureFlagRecordIdsReplicated
     # TODO: SERVER-85426 Remove Feature Flag for SPM-3541
-    - featureFlagSearchHybridScoring
-    - featureFlagSearchHybridScoringPrerequisites
+    - featureFlagRankFusionBasic
+    - featureFlagRankFusionFull
+    - featureFlagSearchHybridScoringFull
     # Transactions are aborted upon fcv upgrade or downgrade.
     - uses_transactions
     # Exclude tests that require a specific fcv.

@@ -380,27 +380,28 @@ def bazel_server_timeout_dumper(jvm_out, proc_pid, project_root):
         os.kill(int(proc_pid), signal.SIGTERM)
         p.wait()
 
-        if os.path.exists(".bazel_real"):
-            with tarfile.open(os.path.join(project_root, "jvm.out.tar.gz"), "w:gz") as tar:
-                tar.add(jvm_out)
+        if os.environ.get("CI"):
+            if os.path.exists(".bazel_real"):
+                with tarfile.open(os.path.join(project_root, "jvm.out.tar.gz"), "w:gz") as tar:
+                    tar.add(jvm_out)
 
-        try:
-            expansions = read_config_file(os.path.join(project_root, "../expansions.yml"))
-            task_id = expansions.get("task_id", None)
-            error_msg = (
-                "Bazel timed out waiting for remote action (from BF-35762).\n"
-                f"See task: <https://spruce.mongodb.com/task/{task_id}|here>."
-            )
+            try:
+                expansions = read_config_file(os.path.join(project_root, "../expansions.yml"))
+                task_id = expansions.get("task_id", None)
+                error_msg = (
+                    "Bazel timed out waiting for remote action (from BF-35762).\n"
+                    f"See task: <https://spruce.mongodb.com/task/{task_id}|here>."
+                )
 
-            evg_api = RetryingEvergreenApi.get_api(
-                config_file=os.path.join(project_root, ".evergreen.yml")
-            )
-            evg_api.send_slack_message(
-                target="#devprod-build-triager",
-                msg=error_msg,
-            )
-        except Exception:  # pylint: disable=broad-except
-            traceback.print_exc()
+                evg_api = RetryingEvergreenApi.get_api(
+                    config_file=os.path.join(project_root, ".evergreen.yml")
+                )
+                evg_api.send_slack_message(
+                    target="#devprod-build-triager",
+                    msg=error_msg,
+                )
+            except Exception:  # pylint: disable=broad-except
+                traceback.print_exc()
 
 
 def bazel_build_subproc_func(**kwargs):
@@ -412,9 +413,12 @@ def bazel_build_subproc_func(**kwargs):
         check=True,
         env=kwargs["env"],
     ).stdout.strip()
-    if os.path.exists(".bazel_real"):
-        with open(".bazel_real") as f:
-            kwargs["args"][0] = f.read().strip()
+
+    if os.environ.get("CI"):
+        if os.path.exists(".bazel_real"):
+            with open(".bazel_real") as f:
+                kwargs["args"][0] = f.read().strip()
+
     jvm_out = os.path.join(output_base, "server/jvm.out")
 
     bazel_proc = subprocess.Popen(**kwargs)
@@ -452,6 +456,7 @@ def perform_tty_bazel_build(bazel_cmd: str) -> None:
     import pty
 
     parent_fd, child_fd = pty.openpty()  # provide tty
+    Globals.timeout_event.clear()
     bazel_proc = bazel_build_subproc_func(
         args=bazel_cmd,
         stdin=child_fd,
@@ -462,7 +467,6 @@ def perform_tty_bazel_build(bazel_cmd: str) -> None:
 
     buffer = ""
     os.close(child_fd)
-    Globals.timeout_event.clear()
     Globals.last_sched_target_progress = ""
     Globals.sched_time_start = time.time()
     try:
@@ -497,6 +501,7 @@ def perform_tty_bazel_build(bazel_cmd: str) -> None:
 
 
 def perform_non_tty_bazel_build(bazel_cmd: str) -> None:
+    Globals.timeout_event.clear()
     bazel_proc = bazel_build_subproc_func(
         args=bazel_cmd,
         stdout=subprocess.PIPE,
@@ -504,7 +509,7 @@ def perform_non_tty_bazel_build(bazel_cmd: str) -> None:
         env={**os.environ.copy(), **Globals.bazel_env_variables},
         text=True,
     )
-    Globals.timeout_event.clear()
+
     Globals.last_sched_target_progress = ""
     Globals.sched_time_start = time.time()
 
@@ -549,7 +554,18 @@ def run_bazel_command(env, bazel_cmd, tries_so_far=0):
                 exceptions=(subprocess.CalledProcessError,),
             )
     except subprocess.CalledProcessError as ex:
-        if platform.system() == "Windows" and tries_so_far == 0:
+        if os.environ.get("CI") is not None and tries_so_far == 0:
+            if platform.system() == "Windows":
+                print(
+                    "Killing Bazel between retries on Windows to work around file access deadlock"
+                )
+                subprocess.run(
+                    [os.path.abspath(Globals.bazel_executable), "shutdown"],
+                    check=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    env={**os.environ.copy(), **Globals.bazel_env_variables},
+                )
             print(
                 "Build failed, retrying with --jobs=4 in case linking failed due to hitting concurrency limits..."
             )
@@ -1191,7 +1207,14 @@ def generate(env: SCons.Environment.Environment) -> None:
         if distro_id is not None:
             distro_or_os = distro_id
 
+    mongo_version = env["MONGO_VERSION"]
+    # For developer builds we don't want to pass things
+    # that might change between commits
+    if os.environ.get("CI") is None:
+        mongo_version = "8.1.0-alpha"
+
     bazel_internal_flags = [
+        "--config=dbg",
         f"--compiler_type={env.ToolchainName()}",
         f'--opt={env.GetOption("opt")}',
         f'--dbg={env.GetOption("dbg") == "on"}',
@@ -1210,6 +1233,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         f'--use_glibcxx_debug={env.GetOption("use-glibcxx-debug") is not None}',
         f'--use_tracing_profiler={env.GetOption("use-tracing-profiler") == "on"}',
         f'--build_grpc={True if env["ENABLE_GRPC_BUILD"] else False}',
+        f'--build_otel={True if env["ENABLE_OTEL_BUILD"] else False}',
         f'--use_libcxx={env.GetOption("libc++") is not None}',
         f'--detect_odr_violations={env.GetOption("detect-odr-violations") is not None}',
         f"--linkstatic={linkstatic}",
@@ -1227,15 +1251,15 @@ def generate(env: SCons.Environment.Environment) -> None:
         f'--js_engine={env.GetOption("js-engine")}',
         f'--use_sasl_client={env.GetOption("use-sasl-client") is not None}',
         "--define",
-        f"MONGO_VERSION={env['MONGO_VERSION']}",
+        f"MONGO_VERSION={mongo_version}",
         "--define",
         f"MONGO_DISTMOD={env['MONGO_DISTMOD']}",
         "--compilation_mode=dbg",  # always build this compilation mode as we always build with -g
         "--dynamic_mode=off",
     ]
 
-    # Timeout linking on windows at 5 minutes to retry with a lower concurrency.
-    if platform.system() == "Windows":
+    # Timeout linking at 8 minutes to retry with a lower concurrency.
+    if os.environ.get("CI") is not None:
         bazel_internal_flags += [
             "--link_timeout_8min=True",
         ]

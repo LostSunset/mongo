@@ -147,6 +147,8 @@ void logNumberOfSolutions(size_t numSolutions) {
 }  // namespace log_detail
 
 namespace {
+MONGO_FAIL_POINT_DEFINE(queryPlannerAlwaysFails);
+
 /**
  * Attempts to apply the index tags from 'branchCacheData' to 'orChild'. If the index assignments
  * cannot be applied, return the error from the process. Otherwise the tags are applied and success
@@ -1009,6 +1011,10 @@ StatusWith<std::vector<std::unique_ptr<QuerySolution>>> QueryPlanner::plan(
                 "options"_attr = optionString(params.mainCollectionInfo.options),
                 "query"_attr = redact(query.toString()));
 
+    if (auto scoped = queryPlannerAlwaysFails.scoped(); MONGO_unlikely(scoped.isActive())) {
+        tasserted(9656400, "Hit queryPlannerAlwaysFails fail point");
+    }
+
     for (size_t i = 0; i < params.mainCollectionInfo.indexes.size(); ++i) {
         LOGV2_DEBUG(20968,
                     5,
@@ -1641,8 +1647,6 @@ StatusWith<QueryPlanner::CostBasedRankerResult> QueryPlanner::planWithCostBasedR
         return statusWithMultiPlanSolns.getStatus();
     }
 
-    // TODO SERVER-97529: This is a temporary stub implementation of CBR which arbitrarily picks
-    // the last of the enumerated plans.
     auto cbrMode = query.getExpCtx()->getQueryKnobConfiguration().getPlanRankerMode();
     EstimateMap estimates;
     CardinalityEstimator cardEstimator(
@@ -1659,6 +1663,8 @@ StatusWith<QueryPlanner::CostBasedRankerResult> QueryPlanner::planWithCostBasedR
     // explain to show all rejected plans.
     std::vector<std::unique_ptr<QuerySolution>> rejectedSoln;
 
+    CostEstimate bestCost = maxCost;
+    std::unique_ptr<QuerySolution> bestSoln;
     for (auto&& soln : allSoln) {
         auto ceRes = cardEstimator.estimatePlan(*soln);
         if (!ceRes.isOK()) {
@@ -1672,19 +1678,33 @@ StatusWith<QueryPlanner::CostBasedRankerResult> QueryPlanner::planWithCostBasedR
                 return ceRes.getStatus();
             }
         } else {
-            costEstimator.estimatePlan(*soln);
+            CostEstimate curCost = costEstimator.estimatePlan(*soln);
+            // Note that the cost comparison operators used here are approximate within some
+            // epsilon as implemented by the overloaded comparisons for estimates.
+            if (curCost < bestCost) {
+                if (bestSoln) {
+                    rejectedSoln.push_back(std::move(bestSoln));
+                }
+                bestSoln = std::move(soln);
+                bestCost = curCost;
+            } else {
+                // TODO SERVER-97933: handle equal cost plans in a deterministic way
+                // For now, we pick one and put the other in rejected plans.
+                rejectedSoln.push_back(std::move(soln));
+            }
         }
     }
-    // TODO SERVER-97529: Pick the best plan from the ones that could be estimated
-    for (auto it = allSoln.begin(); it != std::prev(allSoln.end()); ++it) {
-        if (*it) {
-            // Skip nullptr solutions that were moved in the previous loop.
-            rejectedSoln.push_back(std::move(*it));
-        }
+    if (bestSoln) {
+        acceptedSoln.push_back(std::move(bestSoln));
     }
-    if (!allSoln.empty() && allSoln.back()) {
-        acceptedSoln.push_back(std::move(allSoln.back()));
+    if (acceptedSoln.size() > 1) {
+        // Put the plan with lowest cost (among the estimated plans) first.
+        std::swap(acceptedSoln.front(), acceptedSoln.back());
     }
+    tassert(9751901,
+            "Some plan has fallen into the gray zone between accepted and rejected QSNs.",
+            acceptedSoln.size() + rejectedSoln.size() == allSoln.size());
+
     return QueryPlanner::CostBasedRankerResult{.solutions = std::move(acceptedSoln),
                                                .rejectedPlans = std::move(rejectedSoln),
                                                .estimates = std::move(estimates)};
@@ -1717,6 +1737,7 @@ std::unique_ptr<QuerySolution> QueryPlanner::extendWithAggPipeline(
                                                      groupStage->getIdExpression(),
                                                      groupStage->getAccumulationStatements(),
                                                      groupStage->doingMerge(),
+                                                     groupStage->willBeMerged(),
                                                      isLastSource /* shouldProduceBson */);
             continue;
         }

@@ -6754,7 +6754,7 @@ export const authCommandsLib = {
               {runOnDb: firstDbName, roles: {}},
               {runOnDb: secondDbName, roles: {}}
           ]
-        },    
+        },
         {
           testname: "updateRole_authenticationRestrictions",
           command: {updateRole: "testRole", authenticationRestrictions: []},
@@ -8345,7 +8345,7 @@ export const authCommandsLib = {
         skipSharded: false,
         disableSearch: true,
         skipTest: (conn) => {
-          return !TestData.setParameters.featureFlagSearchHybridScoringPrerequisites;
+          return !TestData.setParameters.featureFlagRankFusionFull;
         },
         // Expect this to fail since there's no mongot set up to execute the $search/vectorSearch.
         testcases: testcases_transformationOnlyExpectFail,
@@ -8359,8 +8359,19 @@ export const authCommandsLib = {
         },
         setup: db => { db.createCollection("foo"); },
         disableSearch: true,
-        skipTest: _ => !TestData.setParameters.featureFlagSearchHybridScoring,
+        skipTest: _ => !TestData.setParameters.featureFlagSearchHybridScoringFull,
         testcases: testcases_transformationOnly
+      },
+      {
+        testname: "aggregate_$setMetadata",
+        command: {
+            aggregate: "foo",
+            cursor: {},
+            pipeline: [{$setMetadata: {score: 5}}]
+        },
+        setup: db => { db.createCollection("foo"); },
+        disableSearch: true,
+        testcases: testcases_transformationOnlyExpectFail
       },
       {
         testname: "aggregate_$scoreFusion",
@@ -8411,7 +8422,7 @@ export const authCommandsLib = {
         skipSharded: false,
         disableSearch: true,
         skipTest: (conn) => {
-          return !TestData.setParameters.featureFlagSearchHybridScoring;
+          return !TestData.setParameters.featureFlagSearchHybridScoringFull;
         },
         testcases: testcases_transformationOnlyExpectFail,
       },

@@ -2286,37 +2286,17 @@ DEATH_TEST(CEHistogramEstimatorCanEstimateTest,
     }
 }
 
-TEST(CEHistogramEstimatorCanEstimateTest, EstimateViaTypeCountsEmptyArray) {
-
-    size_t size = 10;
-    size_t numberOfBuckets = 10;
-
-    std::vector<stats::SBEValue> data;
-    for (size_t i = 0; i < size; i++) {
-        data.push_back(sbe::value::makeNewArray());
-    }
-
-    auto ceHist = stats::createCEHistogram(data, numberOfBuckets);
-
-    {  // {a: {$eq: []}}
-        Interval interval(fromjson("{'': [], '': []}"), true, true);
-        auto [valTag, val] = sbe::bson::convertFrom<false>(interval.start);
-        sbe::value::ValueGuard valGuard{valTag, val};
-
-        auto estimation = estimateCardinalityEqViaTypeCounts(*ceHist, valTag, val);
-        ASSERT_TRUE(estimation);
-        ASSERT_EQ(size, estimation.get().card);
-    }
-}
-
 TEST(CEHistogramEstimatorCanEstimateTest, EstimateViaTypeCountsNull) {
 
-    size_t size = 10;
+    size_t sizeNull = 10, sizeNothing = 5, size = sizeNull + sizeNothing;
     size_t numberOfBuckets = 10;
 
     std::vector<stats::SBEValue> data;
-    for (size_t i = 0; i < size; i++) {
+    for (size_t i = 0; i < sizeNull; i++) {
         data.push_back(stats::makeNullValue());
+    }
+    for (size_t i = 0; i < sizeNothing; i++) {
+        data.push_back({sbe::value::TypeTags::Nothing, 0});
     }
 
     auto ceHist = stats::createCEHistogram(data, numberOfBuckets);
@@ -2325,6 +2305,23 @@ TEST(CEHistogramEstimatorCanEstimateTest, EstimateViaTypeCountsNull) {
         Interval interval(fromjson("{'': null, '': null}"), true, true);
         auto [valTag, val] = sbe::bson::convertFrom<false>(interval.start);
         auto estimation = estimateCardinalityEqViaTypeCounts(*ceHist, valTag, val);
+
+        ASSERT_TRUE(estimation);
+        ASSERT_EQ(size, estimation.get().card);
+    }
+
+    {
+        // Alternative representation of a null interval.
+        Interval interval(fromjson("{'': null, '': NaN}"), true, false);
+        bool startInclusive = interval.startInclusive;
+        bool endInclusive = interval.endInclusive;
+        auto [startTag, startVal] = sbe::bson::convertFrom<false>(interval.start);
+        auto [endTag, endVal] = sbe::bson::convertFrom<false>(interval.end);
+        sbe::value::ValueGuard startGuard{startTag, startVal};
+        sbe::value::ValueGuard endGuard{endTag, endVal};
+
+        auto estimation = estimateCardinalityRangeViaTypeCounts(
+            *ceHist, startInclusive, startTag, startVal, endInclusive, endTag, endVal);
 
         ASSERT_TRUE(estimation);
         ASSERT_EQ(size, estimation.get().card);

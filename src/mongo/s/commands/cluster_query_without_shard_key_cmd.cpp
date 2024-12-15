@@ -173,8 +173,7 @@ std::set<ShardId> getShardsToTarget(OperationContext* opCtx,
                                                      boost::none,  // explain
                                                      parsedInfo.let,
                                                      boost::none /* legacyRuntimeConstants */);
-    getShardIdsForQuery(
-        expCtx, query, collation, cm, &allShardsContainingChunksForNs, nullptr /* info */);
+    getShardIdsForQuery(expCtx, query, collation, cm, &allShardsContainingChunksForNs);
 
     // We must either get a subset of shards to target in the case of a partial shard key or we must
     // target all shards.
@@ -460,7 +459,6 @@ public:
                 ReadPreferenceSetting(ReadPreference::PrimaryOnly),
                 Shard::RetryPolicy::kNoRetry);
 
-            BSONObj targetDoc;
             Response res;
             bool wasStatementExecuted = false;
             std::vector<RemoteCursor> remoteCursors;
@@ -495,8 +493,8 @@ public:
                     continue;
                 }
 
-                remoteCursors.emplace_back(RemoteCursor(
-                    response.shardId.toString(), *response.shardHostAndPort, std::move(cursor)));
+                remoteCursors.emplace_back(
+                    response.shardId.toString(), *response.shardHostAndPort, std::move(cursor));
             }
 
             // For retryable writes, if the statement had already been executed successfully on a
@@ -605,8 +603,8 @@ public:
             while (!ars.done()) {
                 auto response = ars.next();
                 uassertStatusOK(response.swResponse);
-                responses.push_back(response);
                 shardId = response.shardId;
+                responses.push_back(std::move(response));
             }
 
             const auto millisElapsed = timer.millis();
