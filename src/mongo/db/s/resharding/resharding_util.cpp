@@ -71,6 +71,7 @@
 #include "mongo/s/client/shard_registry.h"
 #include "mongo/s/grid.h"
 #include "mongo/s/resharding/common_types_gen.h"
+#include "mongo/s/resharding/resharding_feature_flag_gen.h"
 #include "mongo/s/shard_key_pattern.h"
 #include "mongo/s/sharding_feature_flags_gen.h"
 #include "mongo/stdx/unordered_set.h"
@@ -502,6 +503,10 @@ bool isMoveCollection(const boost::optional<ProvenanceEnum>& provenance) {
          provenance.get() == ProvenanceEnum::kBalancerMoveCollection);
 }
 
+bool isUnshardCollection(const boost::optional<ProvenanceEnum>& provenance) {
+    return provenance && provenance.get() == ProvenanceEnum::kUnshardCollection;
+}
+
 std::shared_ptr<ThreadPool> makeThreadPoolForMarkKilledExecutor(const std::string& poolName) {
     return std::make_shared<ThreadPool>([&] {
         ThreadPool::Options options;
@@ -535,6 +540,23 @@ void validateImplicitlyCreateIndex(bool implicitlyCreateIndex, const BSONObj& sh
                               << "' false when resharding on a hashed shard key",
                 shardKeyPattern.isHashedPattern());
     }
+}
+
+void validateSkipVerification(boost::optional<bool> skipVerification) {
+    if (skipVerification.has_value()) {
+        validateSkipVerification(*skipVerification);
+    }
+}
+
+void validateSkipVerification(bool skipVerification) {
+    uassert(ErrorCodes::InvalidOptions,
+            str::stream() << "Cannot specify '"
+                          << CommonReshardingMetadata::kSkipVerificationFieldName
+                          << "' to false when featureFlagReshardingVerification is "
+                             "not enabled",
+            skipVerification ||
+                resharding::gFeatureFlagReshardingVerification.isEnabled(
+                    serverGlobalParams.featureCompatibility.acquireFCVSnapshot()));
 }
 
 }  // namespace resharding

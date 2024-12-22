@@ -92,7 +92,6 @@
 #include "mongo/db/query/client_cursor/cursor_response.h"
 #include "mongo/db/query/collation/collator_factory_interface.h"
 #include "mongo/db/query/collation/collator_interface.h"
-#include "mongo/db/query/command_diagnostic_printer.h"
 #include "mongo/db/query/explain.h"
 #include "mongo/db/query/explain_options.h"
 #include "mongo/db/query/find.h"
@@ -328,6 +327,10 @@ public:
         return true;
     }
 
+    bool enableDiagnosticPrintingOnFailure() const final {
+        return true;
+    }
+
     class Invocation final : public CommandInvocation {
     public:
         Invocation(const FindCmd* definition,
@@ -452,8 +455,11 @@ public:
             const auto& collectionPtr = collectionOrView->getCollectionPtr();
             if (!collectionOrView->isView()) {
                 const bool isClusteredCollection = collectionPtr && collectionPtr->isClustered();
-                uassertStatusOK(query_request_helper::validateResumeAfter(
-                    opCtx, _cmdRequest->getResumeAfter(), isClusteredCollection));
+                uassertStatusOK(
+                    query_request_helper::validateResumeInput(opCtx,
+                                                              _cmdRequest->getResumeAfter(),
+                                                              _cmdRequest->getStartAt(),
+                                                              isClusteredCollection));
             }
             const auto* collator = collectionPtr ? collectionPtr->getDefaultCollator() : nullptr;
             auto expCtx =
@@ -544,14 +550,6 @@ public:
             CommandHelpers::handleMarkKillOnClientDisconnect(opCtx);
 
             const BSONObj& cmdObj = _request.body;
-
-            // Capture diagnostics for tassert and invariant failures that may occur during query
-            // parsing, planning or execution. No work is done on the hot-path, all computation of
-            // these diagnostics is done lazily during failure handling. This line just creates an
-            // RAII object which holds references to objects on this stack frame, which will be used
-            // to print diagnostics in the event of a tassert or invariant.
-            ScopedDebugInfo findCmdDiagnostics("commandDiagnostics",
-                                               command_diagnostics::Printer{opCtx});
 
             // Parse the command BSON to a FindCommandRequest. Pass in the parsedNss in case cmdObj
             // does not have a UUID.
@@ -747,12 +745,15 @@ public:
                 }
             }
 
-            // Views use the aggregation system and the $_resumeAfter parameter is not allowed. A
-            // more descriptive error will be raised later, but we want to validate this parameter
-            // before beginning the operation.
+            // Views use the aggregation system and the $_resumeAfter/ $_startAt parameter is not
+            // allowed. A more descriptive error will be raised later, but we want to validate this
+            // parameter before beginning the operation.
             if (!collectionOrView->isView()) {
-                uassertStatusOK(query_request_helper::validateResumeAfter(
-                    opCtx, _cmdRequest->getResumeAfter(), isClusteredCollection));
+                uassertStatusOK(
+                    query_request_helper::validateResumeInput(opCtx,
+                                                              _cmdRequest->getResumeAfter(),
+                                                              _cmdRequest->getStartAt(),
+                                                              isClusteredCollection));
             }
 
             auto cq = parseQueryAndBeginOperation(

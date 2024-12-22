@@ -51,7 +51,6 @@
 #include "mongo/db/transaction/transaction_participant.h"
 #include "mongo/db/update/update_oplog_entry_serialization.h"
 #include "mongo/logv2/log.h"
-#include "mongo/stdx/unordered_set.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kStorage
 
@@ -314,11 +313,9 @@ bool commitTimeseriesBucket(OperationContext* opCtx,
                   str::stream() << "Expected 1 insertion of document with _id '" << docId
                                 << "', but found " << output.result.getValue().getN() << ".");
     } else {
-        auto op = batch->generateCompressedDiff
-            ? write_ops_utils::makeTimeseriesCompressedDiffUpdateOp(
-                  opCtx, batch, nss, std::move(stmtIds))
-            : write_ops_utils::makeTimeseriesUpdateOp(
-                  opCtx, batch, nss, metadata, std::move(stmtIds));
+        auto op = write_ops_utils::makeTimeseriesCompressedDiffUpdateOp(
+            opCtx, batch, nss, std::move(stmtIds));
+
         auto const output = performTimeseriesUpdate(opCtx, metadata, op, request);
 
         if ((output.result.isOK() && output.result.getValue().getNModified() != 1) ||
@@ -366,6 +363,9 @@ Status performAtomicTimeseriesWrites(
     invariant(!shard_role_details::getLocker(opCtx)->inAWriteUnitOfWork());
     invariant(!opCtx->inMultiDocumentTransaction());
     invariant(!insertOps.empty() || !updateOps.empty());
+    auto expectedUUID = !insertOps.empty() ? insertOps.front().getCollectionUUID()
+                                           : updateOps.front().getCollectionUUID();
+    invariant(expectedUUID.has_value());
 
     auto ns =
         !insertOps.empty() ? insertOps.front().getNamespace() : updateOps.front().getNamespace();
@@ -375,10 +375,11 @@ Status performAtomicTimeseriesWrites(
     write_ops_exec::LastOpFixer lastOpFixer(opCtx);
     lastOpFixer.startingOp(ns);
 
-    const auto coll = acquireCollection(
-        opCtx,
-        CollectionAcquisitionRequest::fromOpCtx(opCtx, ns, AcquisitionPrerequisites::kWrite),
-        MODE_IX);
+    const auto coll =
+        acquireCollection(opCtx,
+                          CollectionAcquisitionRequest::fromOpCtx(
+                              opCtx, ns, AcquisitionPrerequisites::kWrite, expectedUUID),
+                          MODE_IX);
     if (!coll.exists()) {
         assertTimeseriesBucketsCollectionNotFound(ns);
     }
@@ -656,7 +657,10 @@ void rebuildOptionsWithGranularityFromConfigServer(OperationContext* opCtx,
     }
 }
 
-// Gets commit or error results from processed batches. Aborts unprocessed batches upon errors.
+// Waits for all batches to either commit or abort. This function will attempt to acquire commit
+// rights to any batch to mark it as aborted. If another thread alreay have commit rights we will
+// instead wait for the promise when the commit is either successful or failed. Marked as 'noexcept'
+// as we need to safely be able to call this function during exception handling.
 template <typename ErrorGenerator>
 void getTimeseriesBatchResultsBase(OperationContext* opCtx,
                                    const TimeseriesBatches& batches,
@@ -672,7 +676,6 @@ void getTimeseriesBatchResultsBase(OperationContext* opCtx,
         lastError = errors->back();
     }
     invariant(indexOfLastProcessedBatch == (int64_t)batches.size() || lastError);
-    stdx::unordered_set<bucket_catalog::WriteBatch*> processedBatches;
 
     for (int64_t itr = 0, size = batches.size(); itr < size; ++itr) {
         const auto& [batch, index] = batches[itr];
@@ -682,12 +685,12 @@ void getTimeseriesBatchResultsBase(OperationContext* opCtx,
 
         // If there are any unprocessed batches, we mark them as error with the last known
         // error.
-        if (itr > indexOfLastProcessedBatch && !processedBatches.contains(batch.get())) {
+        if (itr > indexOfLastProcessedBatch &&
+            bucket_catalog::claimWriteBatchCommitRights(*batch)) {
             auto& bucketCatalog =
                 bucket_catalog::GlobalBucketCatalog::get(opCtx->getServiceContext());
             abort(bucketCatalog, batch, lastError->getStatus());
             errors->emplace_back(start + index, lastError->getStatus());
-            processedBatches.insert(batch.get());
             continue;
         }
 
@@ -977,11 +980,9 @@ std::vector<size_t> performUnorderedTimeseriesWrites(
 
     UUID collectionUUID = *optUuid;
     size_t itr = 0;
-    stdx::unordered_set<bucket_catalog::WriteBatch*> processedBatches;
     for (; itr < batches.size(); ++itr) {
         auto& [batch, index] = batches[itr];
-        if (!processedBatches.contains(batch.get())) {
-            processedBatches.insert(batch.get());
+        if (bucket_catalog::claimWriteBatchCommitRights(*batch)) {
             auto stmtIds = isTimeseriesWriteRetryable(opCtx) ? std::move(bucketStmtIds[batch.get()])
                                                              : std::vector<StmtId>{};
             try {
@@ -1159,12 +1160,6 @@ mongo::write_ops::InsertCommandReply performTimeseriesWrites(
 
     mongo::write_ops::InsertCommandReply insertReply;
     auto& baseReply = insertReply.getWriteCommandReplyBase();
-
-    // Prevent FCV upgrade/downgrade while performing a time-series write. There are several feature
-    // flag checks in the layers below and they expect a consistent reading of the FCV to take the
-    // correct write path.
-    // TODO SERVER-70605: remove this FixedFCVRegion.
-    FixedFCVRegion fixedFcv(opCtx);
 
     if (request.getOrdered()) {
         baseReply.setN(performOrderedTimeseriesWrites(

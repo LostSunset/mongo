@@ -23,13 +23,16 @@ load(
     "linker",
     "linkstatic",
     "lsan",
+    "mongo_toolchain_version",
     "msan",
     "opt",
     "pgo_profile",
     "release",
+    "sdkroot",
     "separate_debug",
     "server_js",
     "shared_archive",
+    "skip_archive",
     "spider_monkey_dbg",
     "ssl",
     "streams_release_build",
@@ -287,6 +290,29 @@ selects.config_setting_group(
         ":compiler_type_gcc",
         "@platforms//cpu:aarch64",
     ],
+)
+
+# --------------------------------------
+# mongo_toolchain_version options
+# --------------------------------------
+
+mongo_toolchain_version(
+    name = "mongo_toolchain_version",
+    build_setting_default = "v4",
+)
+
+config_setting(
+    name = "mongo_toolchain_v4",
+    flag_values = {
+        "//bazel/config:mongo_toolchain_version": "v4",
+    },
+)
+
+config_setting(
+    name = "mongo_toolchain_v5",
+    flag_values = {
+        "//bazel/config:mongo_toolchain_version": "v5",
+    },
 )
 
 # ==========
@@ -1200,7 +1226,7 @@ config_setting(
 
 build_otel(
     name = "build_otel",
-    build_setting_default = False,
+    build_setting_default = True,
 )
 
 config_setting(
@@ -1210,6 +1236,7 @@ config_setting(
     ],
     flag_values = {
         "//bazel/config:build_otel": "True",
+        "//bazel/config:release": "False",
     },
 )
 
@@ -1490,8 +1517,19 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "sanitize_without_tsan",
+    match_all = [
+        ":any_enabled_sanitizer",
+        ":tsan_disabled",
+    ],
+)
+
+selects.config_setting_group(
     name = "sanitize_fuzzer_required_settings",
-    match_all = [":fsan_enabled"],
+    match_all = [
+        ":fsan_enabled",
+        ":system_allocator_enabled",
+    ],
 )
 
 selects.config_setting_group(
@@ -1613,6 +1651,38 @@ config_setting(
 )
 
 # --------------------------------------
+# skip_archive options
+# --------------------------------------
+
+skip_archive(
+    name = "skip_archive",
+    build_setting_default = False,
+)
+
+config_setting(
+    name = "skip_archive_enabled",
+    flag_values = {
+        "//bazel/config:skip_archive": "True",
+    },
+)
+
+config_setting(
+    name = "skip_archive_disabled",
+    flag_values = {
+        "//bazel/config:skip_archive": "False",
+    },
+)
+
+selects.config_setting_group(
+    name = "skip_archive_linkstatic_not_windows",
+    match_all = [
+        ":skip_archive_enabled",
+        ":not_windows",
+        ":linkstatic_enabled",
+    ],
+)
+
+# --------------------------------------
 # detect-odr-violations options
 # --------------------------------------
 
@@ -1665,6 +1735,14 @@ config_setting(
     flag_values = {
         "//bazel/config:build_enterprise": "False",
     },
+)
+
+selects.config_setting_group(
+    name = "build_enterprise_linux_enabled",
+    match_all = [
+        ":build_enterprise_enabled",
+        "@platforms//os:linux",
+    ],
 )
 
 # --------------------------------------
@@ -2086,6 +2164,15 @@ developer_dir(
 )
 
 # --------------------------------------
+# sdkroot
+# --------------------------------------
+
+sdkroot(
+    name = "sdkroot",
+    build_setting_default = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+)
+
+# --------------------------------------
 # js_engine options
 # --------------------------------------
 
@@ -2279,18 +2366,18 @@ config_setting(
 )
 
 # --------------------------------------
-# link_timeout_8min
+# link_timeout
 # --------------------------------------
 
 bool_flag(
-    name = "link_timeout_8min",
+    name = "link_timeout",
     build_setting_default = False,
 )
 
 config_setting(
-    name = "link_timeout_8min_enabled",
+    name = "link_timeout_enabled",
     flag_values = {
-        "//bazel/config:link_timeout_8min": "True",
+        "//bazel/config:link_timeout": "True",
     },
 )
 

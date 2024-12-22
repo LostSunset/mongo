@@ -113,8 +113,15 @@ CEResult CardinalityEstimator::estimate(const QuerySolutionNode* node) {
 
 CEResult CardinalityEstimator::estimate(const MatchExpression* node, const bool isFilterRoot) {
     if (isFilterRoot && _rankerMode == QueryPlanRankerModeEnum::kSamplingCE) {
-        // Sample the entire filter
-        return _samplingEstimator->estimateCardinality(node);
+        // Sample the entire filter and scale it to the child's input cardinality.
+        // The sampling estimator returns cardinality estimates scaled to the collection
+        // cardinality, however this MatchExpression maybe appear in the context of a plan fragment
+        // which child's cardinality is not that of the original collection (e.g. Fetch above an
+        // index union). In this case, the collection cardinality and input cardinality differ and
+        // we need to scale our estimate accordingly.
+        auto sel = _samplingEstimator->estimateCardinality(node) / _collCard;
+        _conjSels.emplace_back(sel);
+        return sel * _inputCard;
     }
 
     const MatchExpression::MatchType nodeType = node->matchType();
@@ -128,15 +135,18 @@ CEResult CardinalityEstimator::estimate(const MatchExpression* node, const bool 
         case MatchExpression::GTE:
             ceRes = estimate(static_cast<const ComparisonMatchExpression*>(node));
             break;
+        case MatchExpression::NOT:
+            ceRes = estimate(static_cast<const NotMatchExpression*>(node), isFilterRoot);
+            break;
         case MatchExpression::AND:
             ceRes = estimate(static_cast<const AndMatchExpression*>(node));
             break;
         case MatchExpression::OR:
-            ceRes = estimate(static_cast<const OrMatchExpression*>(node));
+            ceRes = estimate(static_cast<const OrMatchExpression*>(node), isFilterRoot);
             break;
         default:
             if (node->numChildren() == 0) {
-                ceRes = estimate(static_cast<const LeafMatchExpression*>(node));
+                ceRes = estimate(static_cast<const LeafMatchExpression*>(node), isFilterRoot);
             } else {
                 MONGO_UNIMPLEMENTED_TASSERT(9586708);
             }
@@ -145,20 +155,6 @@ CEResult CardinalityEstimator::estimate(const MatchExpression* node, const bool 
     if (!ceRes.isOK()) {
         return ceRes;
     }
-    if (isFilterRoot && (node->numChildren() == 0 || nodeType == MatchExpression::OR)) {
-        // Leaf nodes and ORs that are the root of a QSN's filter are atomic from conjunction
-        // estimation's perspective, therefore conjunction estimation will not add such nodes
-        // to the _conjSels stack. Here we add the selectivity of such root nodes to _conjSels
-        // so that they participate in implicit conjunction selectivity calculation. For instance
-        // a plan of an IndexScanNode with a filter (a < 5) OR (a > 10), and a subsequent FetchNode
-        // with a filter (b > 'abc') express a conjunction ((a < 5) OR (a > 10) AND (b > 'abc')).
-        // Both conjuncts are added here when each QSN estimates its filter node.
-        // All conjuncts' selectivities are combined when computing the total cardinality of the
-        // FetchNode.
-        SelectivityEstimate sel = ceRes.getValue() / _inputCard;
-        _conjSels.emplace_back(sel);
-    }
-
     return ceRes;
 }
 
@@ -184,8 +180,7 @@ CEResult CardinalityEstimator::scanCard(const QuerySolutionNode* node,
         if (!ceRes.isOK()) {
             return ceRes;
         }
-        est.filterCE = ceRes.getValue();
-        est.outCE = *est.filterCE;
+        est.outCE = ceRes.getValue();
     } else {
         est.outCE = card;
     }
@@ -207,13 +202,28 @@ CEResult CardinalityEstimator::estimate(const IndexScanNode* node) {
     }
     est.inCE = ceRes1.getValue();
 
+    // Sampling will attempt to get an estimate for the number of RIDs that the scan returns after
+    // dedupication and applying the filter. This approach does not combine selectivity computed
+    // from the index scan.
+    if (_rankerMode == QueryPlanRankerModeEnum::kSamplingCE) {
+        auto ridsEst = _samplingEstimator->estimateRIDs(node->bounds, node->filter.get());
+        _conjSels.push_back(ridsEst / _inputCard);
+        est.outCE = ridsEst;
+        CardinalityEstimate outCE{est.outCE};
+        _qsnEstimates.emplace(node, std::move(est));
+        return outCE;
+    }
+
+    // We are not sampling, so we need to compute the CE of the filter and then combine that with
+    // the selectivity estimated from the index scan.
     if (const MatchExpression* filter = node->filter.get()) {
-        // Notice that filterCE is estimated independent of interval CE.
+        // In the OK case the result of this call to estimate() is that the selectivities of all
+        // children are added to _conjSels. These selectivities are accounted in the subsequent
+        // call to conjCard().
         auto ceRes2 = estimate(filter, true);
         if (!ceRes2.isOK()) {
             return ceRes2;
         }
-        est.filterCE = ceRes2.getValue();
     }
 
     // Estimate the cardinality of the combined index scan and filter conditions.
@@ -238,12 +248,27 @@ CEResult CardinalityEstimator::estimate(const FetchNode* node) {
         return ceRes1;
     }
 
+    if (node->children[0]->getType() == STAGE_IXSCAN &&
+        static_cast<const IndexScanNode*>(node->children[0].get())->filter ==
+            nullptr &&  // TODO SERVER-98577: Remove this restriction
+        _rankerMode == QueryPlanRankerModeEnum::kSamplingCE) {
+        auto ce = _samplingEstimator->estimateRIDs(
+            static_cast<const IndexScanNode*>(node->children[0].get())->bounds, node->filter.get());
+        trimSels(0);
+        _conjSels.push_back(ce / _inputCard);
+        est.outCE = ce;
+        _qsnEstimates.emplace(node, std::move(est));
+        return ce;
+    }
+
     if (const MatchExpression* filter = node->filter.get()) {
+        // In the OK case the result of this call to estimate() is that the selectivities of all
+        // children are added to _conjSels. These selectivities are accounted in the subsequent
+        // call to conjCard().
         auto ceRes2 = estimate(filter, true);
         if (!ceRes2.isOK()) {
             return ceRes2;
         }
-        est.filterCE = ceRes2.getValue();
     }
 
     tassert(9768403,
@@ -380,14 +405,24 @@ CEResult CardinalityEstimator::tryHistogramAnd(const AndMatchExpression* node) {
     // 3. Keep track of mapping from path to children which reference that path.
     for (size_t i = 0; i < node->numChildren(); ++i) {
         const auto child = node->getChild(i);
-        if (dynamic_cast<const ComparisonMatchExpression*>(child) == nullptr) {
+        bool isEstimableViaHistogram = false;
+        StringData path;
+        if (ComparisonMatchExpression::isComparisonMatchExpression(child)) {
+            isEstimableViaHistogram = true;
+            path = child->path();
+        } else if (child->matchType() == MatchExpression::NOT &&
+                   ComparisonMatchExpression::isComparisonMatchExpression(child->getChild(0))) {
+            isEstimableViaHistogram = true;
+            path = child->getChild(0)->path();
+        }
+        if (!isEstimableViaHistogram) {
             return CEResult(ErrorCodes::HistogramCEFailure,
                             str::stream{} << "encountered child of AndMatchExpression that was not "
                                              "sargable (ComparisonMatchExpression): "
                                           << child->toString());
         }
-        paths.insert(child->path());
-        exprsByPath.insert({child->path(), child});
+        paths.insert(path);
+        exprsByPath.insert({path, child});
     }
 
     size_t selOffset = _conjSels.size();
@@ -436,14 +471,41 @@ CEResult CardinalityEstimator::estimate(const ComparisonMatchExpression* node) {
     MONGO_UNREACHABLE_TASSERT(9751900);
 }
 
-CEResult CardinalityEstimator::estimate(const LeafMatchExpression* node) {
+CEResult CardinalityEstimator::estimate(const LeafMatchExpression* node, bool isFilterRoot) {
     const SelectivityEstimate sel = estimateLeafMatchExpression(node, _inputCard);
+    if (isFilterRoot) {
+        // Add this node's selectivity to the _conjSels so that it can be combined with parent
+        // nodes. For a detailed explanation see the comment to addRootNodeSel().
+        _conjSels.emplace_back(sel);
+    }
     return sel * _inputCard;
+}
+
+CEResult CardinalityEstimator::estimate(const NotMatchExpression* node, bool isFilterRoot) {
+    auto ceRes = estimate(node->getChild(0), false);
+    if (ceRes.isOK()) {
+        CardinalityEstimate ce = ceRes.getValue();
+        // Negation in Mongo is defined wrt the result set, that is the result of negation should
+        // consist of the documents/keys that do not satisfy a condition. Therefore the negated CE
+        // is computed as the complement to the matching CE - that of the child node.
+        // The use of _inputCard is in sync with the fact that all selectivities within a
+        // conjunction (whether it is explicit or implicit) are computed wrt _inputCard. Thus
+        // subtracting from _inputCard is equivalent to computing the negated selectivity as
+        // (1.0 - notChildSelectivity).
+        CEResult negatedCE{_inputCard - ce};
+        if (isFilterRoot &&
+            (node->getChild(0)->numChildren() == 0 ||
+             node->getChild(0)->matchType() == MatchExpression::OR)) {
+            addRootNodeSel(negatedCE);
+        }
+        return negatedCE;
+    }
+    return ceRes;
 }
 
 CEResult CardinalityEstimator::estimate(const AndMatchExpression* node) {
     // Find with an empty query "coll.find({})" generates a AndMatchExpression without children.
-    if (node->numChildren() == 0) {
+    if (node->isTriviallyTrue()) {
         return _inputCard;
     }
 
@@ -480,7 +542,7 @@ CEResult CardinalityEstimator::estimate(const AndMatchExpression* node) {
     return conjCard(selOffset, _inputCard);
 }
 
-CEResult CardinalityEstimator::estimate(const OrMatchExpression* node) {
+CEResult CardinalityEstimator::estimate(const OrMatchExpression* node, bool isFilterRoot) {
     tassert(9586706, "OrMatchExpression must have children.", node->numChildren() > 0);
     std::vector<SelectivityEstimate> disjSels;
     size_t selOffset = _conjSels.size();
@@ -492,12 +554,42 @@ CEResult CardinalityEstimator::estimate(const OrMatchExpression* node) {
         trimSels(selOffset);
         disjSels.emplace_back(ceRes.getValue() / _inputCard);
     }
-    return disjCard(_inputCard, disjSels);
+    CEResult disjRes{disjCard(_inputCard, disjSels)};
+    if (isFilterRoot) {
+        addRootNodeSel(disjRes);
+    }
+    return disjRes;
 }
 
 /*
  * Intervals
  */
+
+OrderedIntervalList openOil(std::string fieldName) {
+    OrderedIntervalList out;
+    BSONObjBuilder bob;
+    bob.appendMinKey("");
+    bob.appendMaxKey("");
+    out.name = fieldName;
+    out.intervals.push_back(IndexBoundsBuilder::makeRangeInterval(
+        bob.obj(), BoundInclusion::kIncludeBothStartAndEndKeys));
+    return out;
+}
+
+IndexBounds equalityPrefix(const IndexBounds* node) {
+    IndexBounds eqPrefix;
+    bool isEqPrefix = true;
+    for (auto&& oil : node->fields) {
+        if (isEqPrefix) {
+            eqPrefix.fields.push_back(oil);
+            isEqPrefix = isEqPrefix && oil.isPoint();
+        } else {
+            eqPrefix.fields.push_back(openOil(oil.name));
+        }
+    }
+    return eqPrefix;
+}
+
 CEResult CardinalityEstimator::estimate(const IndexBounds* node) {
     if (node->isSimpleRange) {
         MONGO_UNIMPLEMENTED_TASSERT(9586707);  // TODO: SERVER-96816
@@ -505,6 +597,12 @@ CEResult CardinalityEstimator::estimate(const IndexBounds* node) {
     if (node->isUnbounded()) {
         _conjSels.emplace_back(oneSel);
         return _inputCard;
+    }
+
+    if (_rankerMode == QueryPlanRankerModeEnum::kSamplingCE) {
+        // TODO: avoid copies to construct the equality prefix. We could do this by teaching
+        // SamplingEstimator or IndexBounds about the equality prefix concept.
+        return _samplingEstimator->estimateKeysScanned(equalityPrefix(node));
     }
 
     // Iterate over all intervals over individual index fields (OILs). These intervals are

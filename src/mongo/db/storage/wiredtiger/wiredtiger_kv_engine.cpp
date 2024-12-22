@@ -761,6 +761,8 @@ void WiredTigerKVEngine::cleanShutdown() {
     // released sessions will skip flushing the size storer.
     _sizeStorer.reset();
 
+    _waitUntilDurableSession.reset();
+
     // We want WiredTiger to leak memory for faster shutdown except when we are running tools to
     // look for memory leaks.
     bool leak_memory = !kAddressSanitizerEnabled;
@@ -839,7 +841,7 @@ Status WiredTigerKVEngine::repairIdent(RecoveryUnit& ru, StringData ident) {
     if (isEphemeral()) {
         return Status::OK();
     }
-    _ensureIdentPath(ident);
+    auto ensuredIdent = _ensureIdentPath(ident);
     return _salvageIfNeeded(uri.c_str());
 }
 
@@ -1442,7 +1444,6 @@ Status WiredTigerKVEngine::createRecordStore(const NamespaceString& nss,
                                              StringData ident,
                                              const CollectionOptions& options,
                                              KeyFormat keyFormat) {
-    _ensureIdentPath(ident);
     WiredTigerSession session(_conn);
 
     StatusWith<std::string> result =
@@ -1477,13 +1478,13 @@ Status WiredTigerKVEngine::createRecordStore(const NamespaceString& nss,
                 logAttrs(nss),
                 "uri"_attr = uri,
                 "config"_attr = config);
+    auto ensuredIdent = _ensureIdentPath(ident);
     return wtRCToStatus(s->create(s, uri.c_str(), config.c_str()), s);
 }
 
 Status WiredTigerKVEngine::importRecordStore(StringData ident,
                                              const BSONObj& storageMetadata,
                                              const ImportOptions& importOptions) {
-    _ensureIdentPath(ident);
     WiredTigerSession session(_conn);
 
     std::string config = uassertStatusOK(
@@ -1497,6 +1498,7 @@ Status WiredTigerKVEngine::importRecordStore(StringData ident,
                 "uri"_attr = uri,
                 "config"_attr = config);
 
+    auto ensuredIdent = _ensureIdentPath(ident);
     return wtRCToStatus(s->create(s, uri.c_str(), config.c_str()), s);
 }
 
@@ -1657,7 +1659,6 @@ Status WiredTigerKVEngine::createSortedDataInterface(RecoveryUnit& ru,
                                                      const CollectionOptions& collOptions,
                                                      StringData ident,
                                                      const IndexDescriptor* desc) {
-    _ensureIdentPath(ident);
 
     std::string collIndexOptions;
 
@@ -1688,6 +1689,7 @@ Status WiredTigerKVEngine::createSortedDataInterface(RecoveryUnit& ru,
         "collection_uuid"_attr = collOptions.uuid,
         "ident"_attr = ident,
         "config"_attr = config);
+    auto ensuredIdent = _ensureIdentPath(ident);
     return WiredTigerIndex::create(WiredTigerRecoveryUnit::get(ru), _uri(ident), config);
 }
 
@@ -1695,7 +1697,6 @@ Status WiredTigerKVEngine::importSortedDataInterface(RecoveryUnit& ru,
                                                      StringData ident,
                                                      const BSONObj& storageMetadata,
                                                      const ImportOptions& importOptions) {
-    _ensureIdentPath(ident);
 
     std::string config = uassertStatusOK(
         WiredTigerUtil::generateImportString(ident, storageMetadata, importOptions));
@@ -1708,6 +1709,7 @@ Status WiredTigerKVEngine::importSortedDataInterface(RecoveryUnit& ru,
     if (WTFailImportSortedDataInterface.shouldFail()) {
         return Status(ErrorCodes::UnknownError, "WTFailImportSortedDataInterface Mock Error");
     }
+    auto ensuredIdent = _ensureIdentPath(ident);
     return WiredTigerIndex::create(WiredTigerRecoveryUnit::get(ru), _uri(ident), config);
 }
 
@@ -1778,7 +1780,6 @@ std::unique_ptr<RecordStore> WiredTigerKVEngine::getTemporaryRecordStore(Operati
 std::unique_ptr<RecordStore> WiredTigerKVEngine::makeTemporaryRecordStore(OperationContext* opCtx,
                                                                           StringData ident,
                                                                           KeyFormat keyFormat) {
-    _ensureIdentPath(ident);
     WiredTigerSession wtSession(_conn);
 
     // We don't log writes to temporary record stores.
@@ -1802,7 +1803,11 @@ std::unique_ptr<RecordStore> WiredTigerKVEngine::makeTemporaryRecordStore(Operat
                 "WiredTigerKVEngine::makeTemporaryRecordStore",
                 "uri"_attr = uri,
                 "config"_attr = config);
-    uassertStatusOK(wtRCToStatus(session->create(session, uri.c_str(), config.c_str()), session));
+    {
+        auto ensuredIdent = _ensureIdentPath(ident);
+        uassertStatusOK(
+            wtRCToStatus(session->create(session, uri.c_str(), config.c_str()), session));
+    }
 
     return getTemporaryRecordStore(opCtx, ident, keyFormat);
 }
@@ -1881,6 +1886,8 @@ Status WiredTigerKVEngine::dropIdent(RecoveryUnit* ru,
     if (identHasSizeInfo) {
         _sizeStorer->remove(uri);
     }
+
+    _removeIdentDirectoryIfEmpty(ident);
 
     if (onDrop) {
         onDrop();
@@ -2132,10 +2139,14 @@ int WiredTigerKVEngine::reconfigure(const char* str) {
     return _conn->reconfigure(_conn, str);
 }
 
-void WiredTigerKVEngine::_ensureIdentPath(StringData ident) {
-    size_t start = 0;
-    size_t idx;
-    while ((idx = ident.find('/', start)) != string::npos) {
+stdx::unique_lock<stdx::mutex> WiredTigerKVEngine::_ensureIdentPath(StringData ident) {
+    size_t idx = ident.find('/');
+    if (idx == string::npos) {
+        // If there is no directory for this ident, we don't need to take the lock.
+        return {};
+    }
+    stdx::unique_lock<stdx::mutex> directoryModifyLock(_directoryModificationMutex);
+    do {
         StringData dir = ident.substr(0, idx);
 
         boost::filesystem::path subdir = _path;
@@ -2152,9 +2163,41 @@ void WiredTigerKVEngine::_ensureIdentPath(StringData ident) {
                 throw;
             }
         }
+        idx = ident.find('/', idx + 1);
+    } while (idx != string::npos);
+    return directoryModifyLock;
+}
 
-        start = idx + 1;
+bool WiredTigerKVEngine::_removeIdentDirectoryIfEmpty(StringData ident, size_t startPos) {
+    size_t separatorPos = ident.find('/', startPos);
+    if (separatorPos == string::npos) {
+        return true;
     }
+    if (!_removeIdentDirectoryIfEmpty(ident, separatorPos + 1)) {
+        return false;
+    }
+    boost::filesystem::path subdir = _path;
+    subdir /= ident.substr(0, separatorPos).toString();
+    stdx::unique_lock<stdx::mutex> directoryModifyLock(_directoryModificationMutex);
+    if (!boost::filesystem::exists(subdir)) {
+        return true;
+    }
+    if (!boost::filesystem::is_empty(subdir)) {
+        return false;
+    }
+    boost::system::error_code ec;
+    boost::filesystem::remove(subdir, ec);
+    if (!ec) {
+        LOGV2(4888200, "Removed empty ident directory", "path"_attr = subdir.string());
+        return true;
+    }
+    // Failing to clean up an empty directory, whilst not ideal, is not a real problem.
+    LOGV2_DEBUG(4888201,
+                1,
+                "Failed to remove empty ident directory",
+                "path"_attr = subdir.string(),
+                "error"_attr = ec.message());
+    return false;
 }
 
 void WiredTigerKVEngine::setJournalListener(JournalListener* jl) {
@@ -2783,20 +2826,19 @@ void WiredTigerKVEngine::waitUntilDurable(OperationContext* opCtx,
 
     // Initialize on first use.
     if (!_waitUntilDurableSession) {
-        invariantWTOK(
-            _conn->open_session(_conn, nullptr, "isolation=snapshot", &_waitUntilDurableSession),
-            nullptr);
+        _waitUntilDurableSession = std::make_unique<WiredTigerSession>(_conn);
     }
 
     // Flush the journal.
-    invariantWTOK(_waitUntilDurableSession->log_flush(_waitUntilDurableSession, "sync=on"),
-                  _waitUntilDurableSession);
+    invariantWTOK(_waitUntilDurableSession->getSession()->log_flush(
+                      _waitUntilDurableSession->getSession(), "sync=on"),
+                  _waitUntilDurableSession->getSession());
     LOGV2_DEBUG(22419, 4, "flushed journal");
 
     // The session is reset periodically so that WT doesn't consider it a rogue session and log
     // about it. The session doesn't actually pin any resources that need to be released.
     if (_timeSinceLastDurabilitySessionReset.millis() > (5 * 60 * 1000 /* 5 minutes */)) {
-        _waitUntilDurableSession->reset(_waitUntilDurableSession);
+        _waitUntilDurableSession->getSession()->reset(_waitUntilDurableSession->getSession());
         _timeSinceLastDurabilitySessionReset.reset();
     }
 

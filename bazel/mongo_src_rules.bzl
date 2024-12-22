@@ -726,7 +726,7 @@ Error:
     to see when support is being added SERVER-85340 We currently only support
     passing the libcxx config on macos for compatibility reasons.
 
-    libc++ requires these configuration: --//bazel/config:compiler_type=clang
+    libc++ requires these configuration: --compiler_type=clang
 """
 
 LIBCXX_COPTS = select({
@@ -767,8 +767,8 @@ LIBUNWIND_DEPS = select({
 REQUIRED_SETTINGS_SANITIZER_ERROR_MESSAGE = """
 Error:
   any sanitizer requires these configurations:
-      --//bazel/config:compiler_type=clang
-      --//bazel/config:opt=on [OR] --//bazel/config:opt=debug
+      --compiler_type=clang
+      --opt=on [OR] --opt=debug
 """
 
 # -fno-omit-frame-pointer should be added if any sanitizer flag is used by user
@@ -796,8 +796,8 @@ ANY_SANITIZER_GCC_LINKFLAGS = select({
 
 SYSTEM_ALLOCATOR_SANITIZER_ERROR_MESSAGE = """
 Error:
-  address and memory sanitizers require these configurations:
-      --//bazel/config:allocator=system
+  fuzzer, address, and memory sanitizers require these configurations:
+      --allocator=system
 """
 
 ADDRESS_SANITIZER_COPTS = select({
@@ -833,6 +833,14 @@ MEMORY_SANITIZER_COPTS = select({
     ],
 }, no_match_error = SYSTEM_ALLOCATOR_SANITIZER_ERROR_MESSAGE)
 
+SANITIZE_WITHOUT_TSAN_LINKFLAGS = select({
+    "//bazel/config:sanitize_without_tsan": [
+        "-rtlib=compiler-rt",
+        "-unwindlib=libgcc",
+    ],
+    "//conditions:default": [],
+})
+
 # Makes it easier to debug memory failures at the cost of some perf:
 #   -fsanitize-memory-track-origins
 MEMORY_SANITIZER_LINKFLAGS = select({
@@ -852,7 +860,7 @@ FUZZER_SANITIZER_COPTS = select({
         "-fcoverage-mapping",
     ],
     "//bazel/config:fsan_disabled": [],
-}, no_match_error = GENERIC_SANITIZER_ERROR_MESSAGE + "fuzzer")
+}, no_match_error = SYSTEM_ALLOCATOR_SANITIZER_ERROR_MESSAGE + "fuzzer")
 
 # These flags are needed to generate a coverage report
 FUZZER_SANITIZER_LINKFLAGS = select({
@@ -860,9 +868,11 @@ FUZZER_SANITIZER_LINKFLAGS = select({
         "-fsanitize=fuzzer-no-link",
         "-fprofile-instr-generate",
         "-fcoverage-mapping",
+        "-nostdlib++",
+        "-lstdc++",
     ],
     "//bazel/config:fsan_disabled": [],
-}, no_match_error = GENERIC_SANITIZER_ERROR_MESSAGE + "fuzzer")
+}, no_match_error = SYSTEM_ALLOCATOR_SANITIZER_ERROR_MESSAGE + "fuzzer")
 
 # Combines following two conditions -
 # 1.
@@ -882,9 +892,9 @@ THREAD_SANITIZER_ERROR_MESSAGE = """
 Error:
   Build failed due to either -
     - Cannot use libunwind with TSAN, please add
-        --//bazel/config:use_libunwind=False to your compile flags or
+        --use_libunwind=False to your compile flags or
     - TSAN is only supported with dynamic link models, please add
-        --//bazel/config:linkstatic=False to your compile flags.
+        --linkstatic=False to your compile flags.
 """
 
 THREAD_SANITIZER_COPTS = select({
@@ -1006,6 +1016,16 @@ LINKSTATIC_ENABLED = select({
     "//bazel/config:linkstatic_enabled": True,
 }, no_match_error = REQUIRED_SETTINGS_DYNAMIC_LINK_ERROR_MESSAGE)
 
+SKIP_ARCHIVE_ENABLED = select({
+    "//bazel/config:skip_archive_linkstatic_not_windows": True,
+    "//conditions:default": False,
+})
+
+SKIP_ARCHIVE_FEATURE = select({
+    "//bazel/config:skip_archive_linkstatic_not_windows": ["supports_start_end_lib"],
+    "//conditions:default": [],
+})
+
 SEPARATE_DEBUG_ENABLED = select({
     "//bazel/config:separate_debug_enabled": True,
     "//conditions:default": False,
@@ -1020,11 +1040,11 @@ TCMALLOC_ERROR_MESSAGE = """
 Error:\n" +
     Build failed due to unsupported platform for current allocator selection:
 
-    '--//bazel/config:allocator=tcmalloc-google' is supported on linux with
+    '--allocator=tcmalloc-google' is supported on linux with
         aarch64 or x86_64
-    '--//bazel/config:allocator=tcmalloc-gperf' is supported on windows or
+    '--allocator=tcmalloc-gperf' is supported on windows or
         linux, but not macos
-    '--//bazel/config:allocator=system' can be used on any platform
+    '--allocator=system' can be used on any platform
 """
 
 TCMALLOC_DEPS = select({
@@ -1048,8 +1068,8 @@ TCMALLOC_DEFINES = select({
 GLIBCXX_DEBUG_ERROR_MESSAGE = """
 Error:
     glibcxx_debug requires these configurations:
-        --//bazel/config:dbg=True
-        --//bazel/config:use_libcxx=False
+        --dbg=True
+        --use_libcxx=False
 """
 
 GLIBCXX_DEBUG_DEFINES = select({
@@ -1060,8 +1080,8 @@ GLIBCXX_DEBUG_DEFINES = select({
 DETECT_ODR_VIOLATIONS_ERROR_MESSAGE = """
 Error:
     detect_odr_violations requires these configurations:
-        --//bazel/config:opt=off
-        --//bazel/config:linker=gold
+        --opt=off
+        --linker=gold
 """
 
 DETECT_ODR_VIOLATIONS_LINKFLAGS = select({
@@ -1254,14 +1274,6 @@ PGO_PROFILE_FLAGS = select({
     "//conditions:default": [],
 })
 
-MACOS_SSL_LINKFLAGS = select({
-    "//bazel/config:ssl_enabled_macos": [
-        "-framework CoreFoundation",
-        "-framework Security",
-    ],
-    "//conditions:default": [],
-})
-
 MONGO_GLOBAL_INCLUDE_DIRECTORIES = [
     "-Isrc",
     "-I$(GENDIR)/src",
@@ -1359,8 +1371,8 @@ MONGO_GLOBAL_LINKFLAGS = (
     COVERAGE_FLAGS +
     GLOBAL_WINDOWS_LIBRAY_LINKFLAGS +
     SASL_WINDOWS_LINKFLAGS +
-    MACOS_SSL_LINKFLAGS +
-    PGO_PROFILE_FLAGS
+    PGO_PROFILE_FLAGS +
+    SANITIZE_WITHOUT_TSAN_LINKFLAGS
 )
 
 MONGO_GLOBAL_ADDITIONAL_LINKER_INPUTS = SYMBOL_ORDER_FILES
@@ -1640,6 +1652,12 @@ def mongo_cc_library(
         exec_properties = exec_properties,
         **kwargs
     )
+
+    # Did not want to expose alwayslink for cc_library as it ends up getting
+    # modified in extract_debuginfo
+    if "alwayslink" not in kwargs:
+        kwargs["alwayslink"] = SKIP_ARCHIVE_ENABLED
+
     cc_library(
         name = name + WITH_DEBUG_SUFFIX,
         srcs = srcs + SANITIZER_DENYLIST_HEADERS,
@@ -1656,7 +1674,7 @@ def mongo_cc_library(
         local_defines = MONGO_GLOBAL_DEFINES + local_defines,
         defines = defines,
         includes = includes,
-        features = MONGO_GLOBAL_FEATURES + select({
+        features = MONGO_GLOBAL_FEATURES + SKIP_ARCHIVE_FEATURE + select({
             "//bazel/config:linkstatic_disabled": ["supports_pic", "pic"],
             "//bazel/config:shared_archive_enabled": ["supports_pic", "pic"],
             "//conditions:default": ["-pic", "pie"],
@@ -1705,6 +1723,7 @@ def mongo_cc_library(
             "//bazel/config:shared_archive_enabled": ":" + name + SHARED_ARCHIVE_SUFFIX,
             "//conditions:default": None,
         }),
+        skip_archive = SKIP_ARCHIVE_ENABLED,
         visibility = visibility,
         deps = deps + cc_deps + [name + HEADER_DEP_SUFFIX],
     )
@@ -1834,8 +1853,8 @@ def _mongo_cc_binary_and_program(
     )
 
     exec_properties |= select({
-        "//bazel/config:link_timeout_8min_enabled": {
-            "cpp_link.timeout": "300",
+        "//bazel/config:link_timeout_enabled": {
+            "cpp_link.timeout": "600",
         },
         "//conditions:default": {},
     })
@@ -1854,7 +1873,7 @@ def _mongo_cc_binary_and_program(
         "local_defines": MONGO_GLOBAL_DEFINES + local_defines,
         "defines": defines,
         "includes": includes,
-        "features": MONGO_GLOBAL_FEATURES + ["-pic", "pie"] + features + select({
+        "features": MONGO_GLOBAL_FEATURES + SKIP_ARCHIVE_FEATURE + ["-pic", "pie"] + features + select({
             "//bazel/config:windows_debug_symbols_enabled": ["generate_pdb_file"],
             "//conditions:default": [],
         }),
@@ -2305,10 +2324,12 @@ def mongo_proto_library(
         srcs,
         tags = [],
         **kwargs):
+    features = kwargs.pop("features", [])
     proto_library(
         name = name,
         srcs = srcs,
         tags = tags + ["gen_source"],
+        features = features + MONGO_GLOBAL_FEATURES,
         **kwargs
     )
 
@@ -2483,6 +2504,50 @@ def mongo_cc_integration_test(
         linkstatic = linkstatic,
         local_defines = local_defines,
         target_compatible_with = target_compatible_with,
+        defines = defines,
+        additional_linker_inputs = additional_linker_inputs,
+        features = features,
+        exec_properties = exec_properties,
+        **kwargs
+    )
+
+def mongo_cc_fuzzer_test(
+        name,
+        srcs = [],
+        deps = [],
+        header_deps = [],
+        visibility = None,
+        data = [],
+        tags = [],
+        copts = [],
+        linkopts = [],
+        includes = [],
+        linkstatic = False,
+        local_defines = [],
+        target_compatible_with = [],
+        defines = [],
+        additional_linker_inputs = [],
+        features = [],
+        exec_properties = {},
+        has_custom_mainline = False,
+        **kwargs):
+    mongo_cc_test(
+        name = name,
+        srcs = srcs,
+        deps = deps,
+        header_deps = header_deps,
+        visibility = visibility,
+        data = data,
+        tags = tags + ["mongo_fuzzer_test"],
+        copts = copts,
+        linkopts = linkopts + ["-fsanitize=fuzzer"],
+        includes = includes,
+        linkstatic = linkstatic,
+        local_defines = local_defines,
+        target_compatible_with = target_compatible_with + select({
+            "//bazel/config:fsan_enabled": [],
+            "//conditions:default": ["@platforms//:incompatible"],
+        }),
         defines = defines,
         additional_linker_inputs = additional_linker_inputs,
         features = features,

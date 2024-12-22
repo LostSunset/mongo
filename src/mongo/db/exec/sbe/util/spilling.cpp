@@ -77,14 +77,13 @@ std::pair<RecordId, key_string::TypeBits> encodeKeyString(key_string::Builder& k
                                                           const value::MaterializedRow& value) {
     value.serializeIntoKeyString(kb);
     auto typeBits = kb.getTypeBits();
-    auto rid = RecordId(kb.getBuffer(), kb.getSize());
+    auto rid = RecordId(kb.getView());
     return {rid, typeBits};
 }
 
 key_string::Value decodeKeyString(const RecordId& rid, key_string::TypeBits typeBits) {
-    auto rawKey = rid.getStr();
     key_string::Builder kb{key_string::Version::kLatestVersion};
-    kb.resetFromBuffer(rawKey.rawData(), rawKey.size());
+    kb.resetFromBuffer(rid.getStr());
     kb.setTypeBits(typeBits);
     return kb.getValueCopy();
 }
@@ -218,12 +217,14 @@ bool SpillingStore::findRecord(OperationContext* opCtx, const RecordId& loc, Rec
 
 void SpillingStore::switchToSpilling(OperationContext* opCtx) {
     invariant(!_originalUnit);
+    stdx::lock_guard<Client> lk(*opCtx->getClient());
     _originalUnit = shard_role_details::releaseRecoveryUnit(opCtx);
     _originalState =
         shard_role_details::setRecoveryUnit(opCtx, std::move(_spillingUnit), _spillingState);
 }
 void SpillingStore::switchToOriginal(OperationContext* opCtx) {
     invariant(!_spillingUnit);
+    stdx::lock_guard<Client> lk(*opCtx->getClient());
     _spillingUnit = shard_role_details::releaseRecoveryUnit(opCtx);
     _spillingState =
         shard_role_details::setRecoveryUnit(opCtx, std::move(_originalUnit), _originalState);

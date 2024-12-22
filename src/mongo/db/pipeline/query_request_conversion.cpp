@@ -82,6 +82,11 @@ AggregateCommandRequest asAggregateCommandRequest(const FindCommandRequest& find
                           << " not supported in aggregation.",
             !findCommand.getReadOnce());
 
+    uassert(ErrorCodes::InvalidPipelineOperator,
+            str::stream() << "Option " << FindCommandRequest::kStartAtFieldName
+                          << " not supported in aggregation.",
+            findCommand.getStartAt().isEmpty());
+
     // Some options are disallowed when resharding improvements are disabled.
     if (!resharding::gFeatureFlagReshardingImprovements.isEnabled(
             serverGlobalParams.featureCompatibility.acquireFCVSnapshot())) {
@@ -173,8 +178,66 @@ AggregateCommandRequest asAggregateCommandRequest(const FindCommandRequest& find
         if (!findCommand.getResumeAfter().isEmpty()) {
             result.setResumeAfter(findCommand.getResumeAfter().getOwned());
         }
+
+        if (!findCommand.getStartAt().isEmpty()) {
+            result.setStartAt(findCommand.getStartAt().getOwned());
+        }
     }
     result.setIncludeQueryStatsMetrics(findCommand.getIncludeQueryStatsMetrics());
+
+    return result;
+}
+
+AggregateCommandRequest asAggregateCommandRequest(
+    const CountCommandRequest& countCommand, boost::optional<ExplainOptions::Verbosity> verbosity) {
+
+    tassert(ErrorCodes::BadValue,
+            "Unsupported type UUID for namspace",
+            countCommand.getNamespaceOrUUID().isNamespaceString());
+    auto nss = countCommand.getNamespaceOrUUID().nss();
+    AggregateCommandRequest result{nss, countCommand.getSerializationContext()};
+
+    // Construct an aggregation pipeline that finds the equivalent documents to this query.
+    std::vector<BSONObj> pipeline;
+    if (!countCommand.getQuery().isEmpty()) {
+        pipeline.push_back(BSON("$match" << countCommand.getQuery()));
+    }
+    if (auto skip = countCommand.getSkip()) {
+        pipeline.push_back(BSON("$skip" << skip.value()));
+    }
+    if (auto limit = countCommand.getLimit()) {
+        pipeline.push_back(BSON("$limit" << limit.value()));
+    }
+    pipeline.push_back(BSON("$count"
+                            << "count"));
+    result.setPipeline(std::move(pipeline));
+
+
+    if (auto collation = countCommand.getCollation()) {
+        result.setCollation(countCommand.getCollation().value());
+    }
+
+    if (auto maxTime = countCommand.getMaxTimeMS(); maxTime && maxTime.value() > 0) {
+        result.setMaxTimeMS(maxTime.value());
+    }
+
+    if (auto& hint = countCommand.getHint(); !hint.isEmpty()) {
+        result.setHint(hint);
+    }
+
+    if (auto& readConcern = countCommand.getReadConcern(); readConcern && !readConcern->isEmpty()) {
+        result.setReadConcern(readConcern);
+    }
+
+    if (auto& unwrapped = countCommand.getUnwrappedReadPref(); unwrapped && !unwrapped->isEmpty()) {
+        result.setUnwrappedReadPref(unwrapped);
+    }
+
+    result.setExplain(verbosity);
+    result.setDbName(nss.dbName());
+    result.setIncludeQueryStatsMetrics(countCommand.getIncludeQueryStatsMetrics());
+    result.setSerializationContext(countCommand.getSerializationContext());
+    result.setGenericArguments(countCommand.getGenericArguments());
 
     return result;
 }

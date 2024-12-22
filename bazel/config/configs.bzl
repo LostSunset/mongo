@@ -14,6 +14,20 @@ compiler_type = rule(
     build_setting = config.string(flag = True),
 )
 
+# =========
+# mongo_toolchain_version
+# =========
+
+mongo_toolchain_version_provider = provider(
+    doc = "Select the mongo toolchain version (e.g.: v4)",
+    fields = {"mongo_toolchain_version": "Choose one of [v4, v5]"},
+)
+
+mongo_toolchain_version = rule(
+    implementation = lambda ctx: mongo_toolchain_version_provider(mongo_toolchain_version = ctx.build_setting_value),
+    build_setting = config.string(flag = True),
+)
+
 # ==========
 # linker
 # ==========
@@ -326,6 +340,20 @@ shared_archive = rule(
 )
 
 # =========
+# skip_archive
+# =========
+
+skip_archive_provider = provider(
+    doc = "Skip generating archives in favor of using --start-lib --end-lib",
+    fields = ["enabled"],
+)
+
+skip_archive = rule(
+    implementation = lambda ctx: skip_archive_provider(enabled = ctx.build_setting_value),
+    build_setting = config.bool(flag = True),
+)
+
+# =========
 # detect_odr_violations
 # =========
 
@@ -575,6 +603,20 @@ developer_dir_provider = provider(
 
 developer_dir = rule(
     implementation = lambda ctx: developer_dir_provider(path = ctx.build_setting_value),
+    build_setting = config.string(flag = True),
+)
+
+# =============
+# sdkroot
+# =============
+
+sdkroot_provider = provider(
+    doc = "The path to the sdk, e.g. SDKROOT=/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk",
+    fields = {"path": "sdk root.]"},
+)
+
+sdkroot = rule(
+    implementation = lambda ctx: sdkroot_provider(path = ctx.build_setting_value),
     build_setting = config.string(flag = True),
 )
 

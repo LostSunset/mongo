@@ -399,6 +399,11 @@ void validateShardDistribution(const std::vector<ShardKeyRange>& shardDistributi
 bool isMoveCollection(const boost::optional<ProvenanceEnum>& provenance);
 
 /**
+ * Returns true if the provenance is unshardCollection.
+ */
+bool isUnshardCollection(const boost::optional<ProvenanceEnum>& provenance);
+
+/**
  * Helper function to create a thread pool for _markKilledExecutor member of resharding POS.
  */
 std::shared_ptr<ThreadPool> makeThreadPoolForMarkKilledExecutor(const std::string& poolName);
@@ -413,14 +418,20 @@ boost::optional<Status> coordinatorAbortedError();
 void validateImplicitlyCreateIndex(bool implicitlyCreateIndex, const BSONObj& shardKey);
 
 /**
- * Validates that for each index spec in sourceIndexSpecs, there is an identical spec in
+ * If 'skipVerification' is false, asserts that featureFlagReshardingVerification is enabled.
+ */
+void validateSkipVerification(boost::optional<bool> skipVerification);
+void validateSkipVerification(bool skipVerification);
+
+/**
+ * Verifies that for each index spec in sourceIndexSpecs, there is an identical spec in
  * localIndexSpecs. Field order does not matter.
  */
 template <typename InputIterator1, typename InputIterator2>
-void validateIndexSpecsMatch(InputIterator1 sourceIndexSpecsBegin,
-                             InputIterator1 sourceIndexSpecsEnd,
-                             InputIterator2 localIndexSpecsBegin,
-                             InputIterator2 localIndexSpecsEnd) {
+void verifyIndexSpecsMatch(InputIterator1 sourceIndexSpecsBegin,
+                           InputIterator1 sourceIndexSpecsEnd,
+                           InputIterator2 localIndexSpecsBegin,
+                           InputIterator2 localIndexSpecsEnd) {
     stdx::unordered_map<std::string, BSONObj> localIndexSpecMap;
     std::transform(
         localIndexSpecsBegin,

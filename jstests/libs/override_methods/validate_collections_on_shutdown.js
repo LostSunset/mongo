@@ -7,6 +7,7 @@ import {
     assertCatalogListOperationsConsistencyForDb
 } from "jstests/libs/catalog_list_operations_consistency_validator.js";
 import {CommandSequenceWithRetries} from "jstests/libs/command_sequence_with_retries.js";
+import {FeatureFlagUtil} from "jstests/libs/feature_flag_util.js";
 
 MongoRunner.validateCollectionsCallback = function(port, options) {
     options = options || {};
@@ -69,13 +70,16 @@ MongoRunner.validateCollectionsCallback = function(port, options) {
                                           ErrorCodes.NotWritablePrimary,
                                           ErrorCodes.NotYetInitialized,
                                           ErrorCodes.Unauthorized,
-                                          ErrorCodes.ConflictingOperationInProgress
+                                          ErrorCodes.ConflictingOperationInProgress,
+                                          ErrorCodes.InterruptedDueToReplStateChange,
+                                          ErrorCodes.PrimarySteppedDown
                                       ]);
                                   const res = conn.adminCommand({replSetFreeze: kFreezeTimeSecs});
                                   assert.commandWorkedOrFailedWithCode(res, [
                                       ErrorCodes.NotYetInitialized,
                                       ErrorCodes.Unauthorized,
-                                      ErrorCodes.NotSecondary
+                                      ErrorCodes.NotSecondary,
+                                      ErrorCodes.InterruptedDueToReplStateChange
                                   ]);
 
                                   // If 'replSetFreeze' succeeds or fails with NotYetInitialized or
@@ -87,10 +91,10 @@ MongoRunner.validateCollectionsCallback = function(port, options) {
                                       return true;
                                   }
 
-                                  // We only retry on NotSecondary error because 'replSetFreeze'
-                                  // could fail with NotSecondary if the node is currently primary
-                                  // or running for election. This could happen if there is a
-                                  // concurrent election running in parallel with the
+                                  // We only retry on NotSecondary or
+                                  // InterruptedDueToReplStateChange error because 'replSetFreeze'
+                                  // could fail with NotSecondary or InterruptedDueToReplStateChange
+                                  // if there is a concurrent election running in parallel with the
                                   // 'replSetStepDown' sent above.
                                   jsTestLog(
                                       "Retrying 'replSetStepDown' and 'replSetFreeze' in port " +
@@ -154,7 +158,15 @@ MongoRunner.validateCollectionsCallback = function(port, options) {
                 }
 
                 try {
-                    assertCatalogListOperationsConsistencyForDb(conn.getDB(dbName), tenant);
+                    // The replica set endpoint of a single-shard cluster with config shard
+                    // can currently become unavailable if a majority of nodes steps down.
+                    // Skip the catalog consistency check it may not be able to read the catalog.
+                    // TODO(SERVER-98707): Don't skip the catalog consistency check
+                    const skipCatalogConsistencyChecker = TestData.configShard &&
+                        FeatureFlagUtil.isEnabled(conn, "ReplicaSetEndpoint");
+                    if (!skipCatalogConsistencyChecker) {
+                        assertCatalogListOperationsConsistencyForDb(conn.getDB(dbName), tenant);
+                    }
                 } catch (e) {
                     return {
                         shouldStop: true,

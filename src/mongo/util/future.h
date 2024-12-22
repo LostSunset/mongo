@@ -44,7 +44,7 @@
 #include "mongo/util/intrusive_counter.h"
 #include "mongo/util/out_of_line_executor.h"
 
-namespace mongo {
+namespace MONGO_MOD_PUB mongo {
 
 /**
  * SemiFuture<T> is logically a possibly-deferred StatusWith<T> (or Status when T is void).
@@ -70,7 +70,7 @@ namespace mongo {
  *   - Anything taking a T argument will receive no arguments.
  */
 template <typename T>
-class MONGO_WARN_UNUSED_RESULT_CLASS SemiFuture {
+class [[nodiscard]] SemiFuture {
     using Impl = future_details::FutureImpl<T>;
     using T_unless_void = std::conditional_t<std::is_void_v<T>, future_details::FakeVoid, T>;
 
@@ -263,7 +263,7 @@ public:
      * WARNING: Do not use this unless you're extremely sure of what you're doing, as callbacks
      * chained to the resulting Future may run in unexpected places.
      */
-    Future<T> unsafeToInlineFuture() && noexcept;
+    MONGO_MOD_UNFORTUNATELY_PUB Future<T> unsafeToInlineFuture() && noexcept;
 
 private:
     friend class Promise<T>;
@@ -311,7 +311,7 @@ SemiFuture(StatusWith<T>) -> SemiFuture<T>;
  * All comments on SemiFuture<T> apply to Future<T> as well.
  */
 template <typename T>
-class MONGO_WARN_UNUSED_RESULT_CLASS Future : private SemiFuture<T> {
+class [[nodiscard]] Future : private SemiFuture<T> {
     using Impl = typename SemiFuture<T>::Impl;
     using T_unless_void = typename SemiFuture<T>::T_unless_void;
 
@@ -626,7 +626,7 @@ Future(StatusWith<T>) -> Future<T>;
  * because they will propagate out BrokenPromise if the executor refuses work.
  */
 template <typename T>
-class MONGO_WARN_UNUSED_RESULT_CLASS ExecutorFuture : private SemiFuture<T> {
+class [[nodiscard]] ExecutorFuture : private SemiFuture<T> {
     using Impl = typename SemiFuture<T>::Impl;
     using T_unless_void = typename SemiFuture<T>::T_unless_void;
 
@@ -1045,7 +1045,7 @@ private:
  * A SharedSemiFuture may be passed between threads, but only one thread may use it at a time.
  */
 template <typename T>
-class MONGO_WARN_UNUSED_RESULT_CLASS SharedSemiFuture {
+class [[nodiscard]] SharedSemiFuture {
     using Impl = future_details::SharedStateHolder<T>;
     using T_unless_void = std::conditional_t<std::is_void_v<T>, future_details::FakeVoid, T>;
 
@@ -1133,7 +1133,7 @@ public:
      * WARNING: Do not use this unless you're extremely sure of what you're doing, as callbacks
      * chained to the resulting Future may run in unexpected places.
      */
-    Future<T> unsafeToInlineFuture() const noexcept {
+    MONGO_MOD_UNFORTUNATELY_PUB Future<T> unsafeToInlineFuture() const noexcept {
         return Future<T>(toFutureImpl());
     }
 
@@ -1356,11 +1356,13 @@ auto makeReadyFutureWith(Func&& func) -> Future<FutureContinuationResult<Func&&>
 } catch (const DBException& ex) {
     return ex.toStatus();
 }
+}  // namespace mongo
 
 //
 // Implementations of methods that couldn't be defined in the class due to ordering requirements.
+// In a separate namespace block since they shouldn't be marked with MONGO_MOD_PUB.
 //
-
+namespace mongo {
 template <typename T>
 template <typename UniqueFunc>
 auto ExecutorFuture<T>::_wrapCBHelper(ExecutorPtr exec, UniqueFunc&& func) {

@@ -49,6 +49,7 @@
 #include "mongo/util/hierarchical_acquisition.h"
 #include "mongo/util/interruptible.h"
 #include "mongo/util/intrusive_counter.h"
+#include "mongo/util/modules.h"
 #include "mongo/util/scopeguard.h"
 
 namespace mongo {
@@ -112,7 +113,7 @@ class SharedPromise;
 template <typename T>
 class SharedSemiFuture;
 
-namespace future_details {
+namespace MONGO_MOD_PRIVATE future_details {
 
 template <typename T>
 class FutureImpl;
@@ -859,7 +860,7 @@ private:
 };
 
 template <typename T>
-class MONGO_WARN_UNUSED_RESULT_CLASS FutureImpl {
+class [[nodiscard]] FutureImpl {
 public:
     using value_type = T;
 
@@ -1410,7 +1411,7 @@ private:
 };
 
 template <>
-class MONGO_WARN_UNUSED_RESULT_CLASS FutureImpl<void> : public FutureImpl<FakeVoid> {
+class [[nodiscard]] FutureImpl<void> : public FutureImpl<FakeVoid> {
     using Base = FutureImpl<FakeVoid>;
 
 public:

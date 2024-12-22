@@ -4964,9 +4964,6 @@ export const authCommandsLib = {
             ],
             "queryType": "insert",
         },
-          skipTest: (conn) => {
-              return !TestData.setParameters.featureFlagFLE2ProtocolVersion2;
-          },
           testcases: [
               {
                   runOnDb: adminDbName,
@@ -8345,7 +8342,7 @@ export const authCommandsLib = {
         skipSharded: false,
         disableSearch: true,
         skipTest: (conn) => {
-          return !TestData.setParameters.featureFlagRankFusionFull;
+          return !TestData.setParameters.featureFlagRankFusionBasic;
         },
         // Expect this to fail since there's no mongot set up to execute the $search/vectorSearch.
         testcases: testcases_transformationOnlyExpectFail,

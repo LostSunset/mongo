@@ -65,10 +65,9 @@
 #include "mongo/db/namespace_string.h"
 #include "mongo/db/operation_context.h"
 #include "mongo/db/pipeline/aggregation_request_helper.h"
+#include "mongo/db/pipeline/query_request_conversion.h"
 #include "mongo/db/query/client_cursor/collect_query_stats_mongod.h"
 #include "mongo/db/query/collection_query_info.h"
-#include "mongo/db/query/command_diagnostic_printer.h"
-#include "mongo/db/query/count_command_as_aggregation_command.h"
 #include "mongo/db/query/count_command_gen.h"
 #include "mongo/db/query/explain.h"
 #include "mongo/db/query/explain_options.h"
@@ -124,6 +123,10 @@ class CmdCount : public CountCmdVersion1Gen<CmdCount> {
 public:
     std::string help() const override {
         return "count objects in collection";
+    }
+
+    bool enableDiagnosticPrintingOnFailure() const final {
+        return true;
     }
 
     class Invocation final : public InvocationBaseGen {
@@ -235,14 +238,6 @@ public:
             if (prepareForFLERewrite(opCtx, request().getEncryptionInformation())) {
                 processFLECountD(opCtx, _ns, request());
             }
-
-            // Capture diagnostics for tassert and invariant failures that may occur during query
-            // parsing, planning or execution. No work is done on the hot-path, all computation of
-            // these diagnostics is done lazily during failure handling. This line just creates an
-            // RAII object which holds references to objects on this stack frame, which will be used
-            // to print diagnostics in the event of a tassert or invariant.
-            ScopedDebugInfo countCmdDiagnostics("commandDiagnostics",
-                                                command_diagnostics::Printer{opCtx});
 
             // Acquire locks. The RAII object is optional, because in the case of a view, the locks
             // need to be released.
@@ -477,20 +472,14 @@ public:
             auto curOp = CurOp::get(opCtx);
             curOp->debug().queryStatsInfo.disableForSubqueryExecution = true;
             const auto vts = auth::ValidatedTenancyScope::get(opCtx);
-            auto viewAggregation = countCommandAsAggregationCommand(req, _ns);
-            uassertStatusOK(viewAggregation);
-
-            auto viewAggCmd =
-                OpMsgRequestBuilder::create(vts, _ns.dbName(), viewAggregation.getValue()).body;
-            auto viewAggRequest = aggregation_request_helper::parseFromBSON(
-                viewAggCmd, vts, verbosity, req.getSerializationContext());
-
+            auto viewAggRequest =
+                query_request_conversion::asAggregateCommandRequest(req, verbosity);
             // An empty PrivilegeVector is acceptable because these privileges are only checked
             // on getMore and explain will not open a cursor.
             auto runStatus = runAggregate(opCtx,
                                           viewAggRequest,
                                           {viewAggRequest},
-                                          viewAggregation.getValue(),
+                                          req.toBSON(),
                                           PrivilegeVector(),
                                           replyBuilder);
             uassertStatusOK(runStatus);
@@ -498,12 +487,11 @@ public:
 
         CountCommandReply runCountOnView(OperationContext* opCtx, const RequestType& req) {
             const auto vts = auth::ValidatedTenancyScope::get(opCtx);
-            auto viewAggregation = countCommandAsAggregationCommand(req, _ns);
-            uassertStatusOK(viewAggregation.getStatus());
-            auto aggRequest = OpMsgRequestBuilder::create(
-                vts, _ns.dbName(), std::move(viewAggregation.getValue()));
+            auto aggRequest = query_request_conversion::asAggregateCommandRequest(req, boost::none);
+            auto opMsgAggRequest =
+                OpMsgRequestBuilder::create(vts, aggRequest.getDbName(), aggRequest.toBSON());
+            BSONObj aggResult = CommandHelpers::runCommandDirectly(opCtx, opMsgAggRequest);
 
-            BSONObj aggResult = CommandHelpers::runCommandDirectly(opCtx, aggRequest);
             long long countResult = ViewResponseFormatter(aggResult).getCountValue(
                 _ns.dbName().tenantId(),
                 SerializationContext::stateCommandReply(req.getSerializationContext()));

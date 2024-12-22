@@ -1,4 +1,4 @@
-load("//bazel:mongo_src_rules.bzl", "idl_generator", "mongo_cc_library", "mongo_cc_unit_test")
+load("//bazel:mongo_src_rules.bzl", "idl_generator", "mongo_cc_benchmark", "mongo_cc_library", "mongo_cc_unit_test")
 
 package(default_visibility = ["//visibility:public"])
 
@@ -42,23 +42,14 @@ mongo_cc_library(
     name = "transaction_api",
     srcs = [
         "internal_transaction_metrics.cpp",
+        "sep_transaction_client.cpp",
         "transaction_api.cpp",
+        "transaction_with_retries_api.cpp",
     ],
     hdrs = [
         "internal_transaction_metrics.h",
         "transaction_api.h",
     ],
-    # TODO(SERVER-97807)
-    # transaction_api.cpp needs more than 3.5GB of ram for gcc+fission builds
-    exec_properties = select({
-        "//bazel/config:linux_gcc_fission_x86_64": {
-            "Pool": "large_memory_x86_64",
-        },
-        "//bazel/config:linux_gcc_fission_aarch64": {
-            "Pool": "large_memory_arm64",
-        },
-        "//conditions:default": {},
-    }),
     deps = [
         "//src/mongo/db:operation_time_tracker",
         "//src/mongo/db:service_context",
@@ -168,5 +159,20 @@ mongo_cc_unit_test(
         "//src/mongo/executor:inline_executor",
         "//src/mongo/idl:server_parameter_test_util",
         "//src/mongo/s:sharding_router_api",
+    ],
+)
+
+mongo_cc_benchmark(
+    name = "transaction_operations_bm",
+    srcs = [
+        "transaction_operations_bm.cpp",
+    ],
+    deps = [
+        ":transaction_operations",
+        "//src/mongo/db:server_base",
+        "//src/mongo/db:service_context_test_fixture",
+        "//src/mongo/db/concurrency:lock_manager",
+        "//src/mongo/db/op_observer:batched_write_context",
+        "//src/mongo/db/repl:oplog_entry",
     ],
 )

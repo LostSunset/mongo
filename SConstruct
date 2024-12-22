@@ -148,10 +148,10 @@ add_option(
     help="Configures the path to the evergreen configured tmp directory.",
     default=None,
 )
-# Preload to perform early fetch fo repositories
-tool = Tool("integrate_bazel")
-tool.exists(DefaultEnvironment())
-mongo_toolchain_execroot = DefaultEnvironment().PrefetchToolchain()
+
+integrate_bazel = Tool("integrate_bazel")
+integrate_bazel.exists(DefaultEnvironment())
+mongo_toolchain_execroot = DefaultEnvironment().BazelExecroot()
 
 build_profile = build_profiles.get_build_profile(get_option("build-profile"))
 
@@ -349,14 +349,12 @@ add_option(
     type="choice",
 )
 
-
 add_option(
     "debug-symbols",
-    choices=["on", "off"],
-    const="on",
+    choices=["on", "off", "minimal"],
     default=build_profile.debug_symbols,
     help="Enable producing debug symbols",
-    nargs="?",
+    nargs=1,
     type="choice",
 )
 
@@ -756,31 +754,6 @@ add_option(
     default=mongo_toolchain_execroot if mongo_toolchain_execroot else "",
     help="Name a toolchain root for use with toolchain selection Variables files in etc/scons",
 )
-
-if mongo_toolchain_execroot:
-    bin_dir = os.path.join(mongo_toolchain_execroot, "external/mongo_toolchain/v4/bin")
-    gcc_path = os.path.dirname(
-        os.path.realpath(os.path.join(bin_dir, os.readlink(os.path.join(bin_dir, "g++"))))
-    )
-    clang_path = os.path.dirname(
-        os.path.realpath(os.path.join(bin_dir, os.readlink(os.path.join(bin_dir, "clang++"))))
-    )
-else:
-    gcc_path = ""
-    clang_path = ""
-
-add_option(
-    "bazel-toolchain-clang",
-    default=clang_path,
-    help="used in Variables files to help find the real bazel toolchain location.",
-)
-
-add_option(
-    "bazel-toolchain-gcc",
-    default=gcc_path,
-    help="used in Variables files to help find the real bazel toolchain location.",
-)
-
 
 add_option(
     "msvc-debugging-format",
@@ -1196,6 +1169,12 @@ env_vars.Add(
     help="Path to the dsymutil utility",
 )
 
+env_vars.Add(
+    "MONGO_TOOLCHAIN_VERSION",
+    default="v4",
+    help="Version of the mongo toolchain to use in bazel.",
+)
+
 
 def validate_dwarf_version(key, val, env):
     if val == "4" or val == "5" or val == "":
@@ -1582,13 +1561,6 @@ env_vars.Add(
 )
 
 env_vars.Add(
-    "ENABLE_OTEL_BUILD",
-    help="Set the boolean (auto, on/off true/false 1/0) to enable building otel and protobuf compiler.",
-    converter=functools.partial(bool_var_converter, var="ENABLE_OTEL_BUILD"),
-    default="0",
-)
-
-env_vars.Add(
     "GDB",
     help="Configures the path to the 'gdb' debugger binary.",
 )
@@ -1822,6 +1794,7 @@ if ARGUMENTS.get("CC") and ARGUMENTS.get("CXX"):
 # Early load to setup env functions
 tool = Tool("integrate_bazel")
 tool.exists(env)
+env.PrefetchToolchain(env.get("MONGO_TOOLCHAIN_VERSION"))
 
 # The placement of this is intentional. Here we setup an atexit method to store tooling metrics.
 # We should only register this function after env, env_vars and the parser have been properly initialized.
@@ -2153,7 +2126,7 @@ env.AddMethod(is_toolchain, "ToolchainIs")
 
 releaseBuild = get_option("release") == "on"
 debugBuild = get_option("dbg") == "on"
-debug_symbols = get_option("debug-symbols") == "on"
+debug_symbols = get_option("debug-symbols") != "off"
 optBuild = mongo_generators.get_opt_options(env)
 
 if env.get("ENABLE_BUILD_RETRY"):
@@ -4492,7 +4465,11 @@ def doConfigure(myenv):
             llvm_symbolizer = env["LLVM_SYMBOLIZER"]
 
             if not os.path.isabs(llvm_symbolizer):
-                llvm_symbolizer = myenv.WhereIs(llvm_symbolizer)
+                # WhereIs looks at the path, but not the PWD. If it fails, try assuming
+                # the path is relative to the PWD.
+                llvm_symbolizer = myenv.WhereIs(llvm_symbolizer) or os.path.realpath(
+                    llvm_symbolizer
+                )
 
             if not myenv.File(llvm_symbolizer).exists():
                 myenv.FatalError(f"Symbolizer binary at path {llvm_symbolizer} does not exist")
@@ -4705,8 +4682,10 @@ def doConfigure(myenv):
         # Turn off debug symbols. Due to g0 disabling any previously added debugging flags,
         # it is easier to append g0 near the end rather than trying to not add all the other
         # debug flags. This should be added after any debug flags.
-        if not debug_symbols:
+        if get_option("debug-symbols") == "off":
             myenv.AppendUnique(LINKFLAGS=["-g0"], CCFLAGS=["-g0"])
+        elif get_option("debug-symbols") == "minimal":
+            myenv.AppendUnique(LINKFLAGS=["-g1"], CCFLAGS=["-g1"])
 
         # Our build is already parallel.
         if not myenv.AddToLINKFLAGSIfSupported("-Wl,--no-threads"):
@@ -6098,6 +6077,20 @@ if "SANITIZER_RUNTIME_LIBS" in env:
         AIB_COMPONENTS_EXTRA=["dist-test"],
     )
 
+for benchmark_tag in env.get_bazel_benchmark_tags():
+    env.AddPackageNameAlias(
+        component=benchmark_tag,
+        role="runtime",
+        name=benchmark_tag,
+    )
+
+    env.AutoInstall(
+        ".",
+        f"$BUILD_ROOT/{benchmark_tag}.txt",
+        AIB_COMPONENT=benchmark_tag,
+        AIB_ROLE="runtime",
+    )
+
 env["RPATH_ESCAPED_DOLLAR_ORIGIN"] = "\\$$$$ORIGIN"
 
 
@@ -6699,13 +6692,94 @@ if env.get("__NINJA_NO") != "1":
 
         t = target[0]
         suffix = getattr(t.attributes, "aib_effective_suffix", t.get_suffix())
-        bazel_node = env.File(
-            t.abspath.replace(
-                f"{env.Dir('#').abspath}/{env['BAZEL_OUT_DIR']}/src", env.Dir("$BUILD_DIR").path
-            )
+
+        proj_path = env.Dir("#src").abspath.replace("\\", "/")
+        build_path = env.Dir("$BUILD_DIR").abspath.replace("\\", "/")
+        bazel_path = os.path.join(env.Dir("#").abspath, env["BAZEL_OUT_DIR"] + "/src").replace(
+            "\\", "/"
         )
 
-        prog_output = env.BazelAutoInstallSingleTarget(bazel_node, suffix, bazel_node)
+        new_path = t.abspath.replace("\\", "/").replace(proj_path, build_path)
+        new_path = new_path.replace(build_path, bazel_path)
+
+        bazel_node = env.File(new_path)
+
+        debug_files = []
+        debug_suffix = ""
+        # This was copied from separate_debug.py
+        if env.TargetOSIs("darwin"):
+            # There isn't a lot of great documentation about the structure of dSYM bundles.
+            # For general bundles, see:
+            #
+            # https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html
+            #
+            # But we expect to find two files in the bundle. An
+            # Info.plist file under Contents, and a file with the same
+            # name as the target under Contents/Resources/DWARF.
+
+            target0 = bazel_node
+            dsym_dir_name = target0.name + ".dSYM"
+            dsym_dir = env.Dir(dsym_dir_name, directory=target0.get_dir())
+
+            dwarf_sym_with_debug = os.path.join(
+                dsym_dir.abspath, f"Contents/Resources/DWARF/{target0.name}_shared_with_debug.dylib"
+            )
+
+            # this handles shared libs or program binaries
+            if os.path.exists(dwarf_sym_with_debug):
+                dwarf_sym_name = f"{target0.name}.dylib"
+            else:
+                dwarf_sym_with_debug = os.path.join(
+                    dsym_dir.abspath, f"Contents/Resources/DWARF/{target0.name}_with_debug"
+                )
+                dwarf_sym_name = f"{target0.name}"
+
+            plist_file = env.File("Contents/Info.plist", directory=dsym_dir)
+            setattr(plist_file.attributes, "aib_effective_suffix", ".dSYM")
+            setattr(
+                plist_file.attributes,
+                "aib_additional_directory",
+                "{}/Contents".format(dsym_dir_name),
+            )
+
+            dwarf_dir = env.Dir("Contents/Resources/DWARF", directory=dsym_dir)
+
+            dwarf_file = env.File(dwarf_sym_with_debug, directory=dwarf_dir)
+            setattr(dwarf_file.attributes, "aib_effective_suffix", ".dSYM")
+            setattr(
+                dwarf_file.attributes,
+                "aib_additional_directory",
+                "{}/Contents/Resources/DWARF".format(dsym_dir_name),
+            )
+            setattr(dwarf_file.attributes, "aib_new_name", dwarf_sym_name)
+
+            debug_files.extend([plist_file, dwarf_file])
+            debug_suffix = ".dSYM"
+
+        elif env.TargetOSIs("posix"):
+            debug_suffix = env.subst("$SEPDBG_SUFFIX")
+            debug_file = env.File(f"{os.path.splitext(bazel_node.abspath)[0]}{debug_suffix}")
+            debug_files.append(debug_file)
+        elif env.TargetOSIs("windows"):
+            debug_suffix = ".pdb"
+            debug_file = env.File(f"{os.path.splitext(bazel_node.abspath)[0]}{debug_suffix}")
+            debug_files.append(debug_file)
+        else:
+            pass
+
+        if debug_symbols:
+            for debug_file in debug_files:
+                setattr(debug_file.attributes, "debug_file_for", bazel_node)
+            setattr(bazel_node.attributes, "separate_debug_files", debug_files)
+
+        installed_prog = env.BazelAutoInstallSingleTarget(bazel_node, suffix, bazel_node)
+
+        installed_debugs = []
+        if debug_symbols:
+            for debug_file in debug_files:
+                installed_debugs.append(
+                    env.BazelAutoInstallSingleTarget(debug_file, debug_suffix, debug_file)
+                )
 
         libs = []
         debugs = []
@@ -6732,9 +6806,13 @@ if env.get("__NINJA_NO") != "1":
                         )[0]
                     )
 
-            env.Depends(prog_output[0], libs)
-            if len(prog_output) == 2:
-                env.Depends(prog_output[1], debugs)
+        env.Depends(installed_prog, libs)
+
+        for installed_debug_file in installed_debugs:
+            env.Depends(installed_debug_file, debugs)
+
+        setattr(t.attributes, "AIB_INSTALLED_FILES", installed_prog)
+
         return target, source
 
     builder = env["BUILDERS"]["BazelProgram"]

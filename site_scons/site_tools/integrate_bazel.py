@@ -397,7 +397,7 @@ def bazel_server_timeout_dumper(jvm_out, proc_pid, project_root):
                     config_file=os.path.join(project_root, ".evergreen.yml")
                 )
                 evg_api.send_slack_message(
-                    target="#devprod-build-triager",
+                    target="#devprod-build-automation",
                     msg=error_msg,
                 )
             except Exception:  # pylint: disable=broad-except
@@ -566,11 +566,17 @@ def run_bazel_command(env, bazel_cmd, tries_so_far=0):
                     stderr=subprocess.STDOUT,
                     env={**os.environ.copy(), **Globals.bazel_env_variables},
                 )
+            linker_jobs = 4
+            sanitizers = env.GetOption("sanitize")
+            if sanitizers is not None and "fuzzer" in sanitizers.split(","):
+                linker_jobs = 1
             print(
-                "Build failed, retrying with --jobs=4 in case linking failed due to hitting concurrency limits..."
+                f"Build failed, retrying with --jobs={linker_jobs} in case linking failed due to hitting concurrency limits..."
             )
             run_bazel_command(
-                env, bazel_cmd + ["--jobs", "4", "--link_timeout_8min=False"], tries_so_far=1
+                env,
+                bazel_cmd + ["--jobs", str(linker_jobs), "--link_timeout=False"],
+                tries_so_far=1,
             )
             return
 
@@ -626,6 +632,8 @@ def bazel_build_thread_func(env, log_dir: str, verbose: bool, ninja_generate: bo
 
     if env.GetOption("coverity-build"):
         print(f"BAZEL_COMMAND: {' '.join(bazel_cmd)}")
+        Globals.bazel_build_success = True
+        Globals.bazel_build_exitcode = 0
         return
 
     print("Starting bazel build thread...")
@@ -640,7 +648,7 @@ def create_bazel_builder(builder: SCons.Builder.Builder) -> SCons.Builder.Builde
         src_suffix=builder.src_suffix,
         source_scanner=builder.source_scanner,
         target_scanner=builder.target_scanner,
-        emitter=SCons.Builder.ListEmitter([builder.emitter, bazel_target_emitter]),
+        emitter=SCons.Builder.ListEmitter([bazel_target_emitter]),
     )
 
 
@@ -658,8 +666,29 @@ def get_default_cert_dir():
         return f"{os.path.expanduser('~')}/.engflow"
 
 
+def get_default_engflow_auth_path():
+    bin_dir = os.path.expanduser("~/.local/bin/")
+    executable_name = "engflow_auth"
+    if platform.system() == "Windows":
+        executable_name += ".exe"
+    return os.path.join(bin_dir, executable_name)
+
+
 def validate_remote_execution_certs(env: SCons.Environment.Environment) -> bool:
     running_in_evergreen = os.environ.get("CI")
+
+    # Check engflow_auth existence
+    if os.path.exists(get_default_engflow_auth_path()):
+        # Check engflow_auth token presence
+        if os.path.exists(
+            os.path.expanduser("~/.config/engflow_auth/tokens/sodalite.cluster.engflow.com")
+        ):
+            return True
+        else:
+            print(
+                "engflow_auth is installed, but found no token. Please run the following to authenticate with EngFlow:\nbazel run --config=local //buildscripts:engflow_auth"
+            )
+            return False
 
     if running_in_evergreen and not os.path.exists("./engflow.cert"):
         print(
@@ -872,19 +901,19 @@ def timed_auto_install_bazel(env, libdep, shlib_suffix):
 
 def auto_install_single_target(env, libdep, suffix, bazel_node):
     auto_install_mapping = env["AIB_SUFFIX_MAP"].get(suffix)
+    if auto_install_mapping is not None:
+        env.AutoInstall(
+            target=auto_install_mapping.directory,
+            source=[bazel_node],
+            AIB_COMPONENT=env.get("AIB_COMPONENT", "AIB_DEFAULT_COMPONENT"),
+            AIB_ROLE=auto_install_mapping.default_role,
+            AIB_COMPONENTS_EXTRA=env.get("AIB_COMPONENTS_EXTRA", []),
+        )
+        auto_installed_libdep = env.GetAutoInstalledFiles(libdep)
+        auto_installed_bazel_node = env.GetAutoInstalledFiles(bazel_node)
 
-    env.AutoInstall(
-        target=auto_install_mapping.directory,
-        source=[bazel_node],
-        AIB_COMPONENT=env.get("AIB_COMPONENT", "AIB_DEFAULT_COMPONENT"),
-        AIB_ROLE=auto_install_mapping.default_role,
-        AIB_COMPONENTS_EXTRA=env.get("AIB_COMPONENTS_EXTRA", []),
-    )
-    auto_installed_libdep = env.GetAutoInstalledFiles(libdep)
-    auto_installed_bazel_node = env.GetAutoInstalledFiles(bazel_node)
-
-    if auto_installed_libdep[0] != auto_installed_bazel_node[0]:
-        env.Depends(auto_installed_libdep[0], auto_installed_bazel_node[0])
+        if auto_installed_libdep[0] != auto_installed_bazel_node[0]:
+            env.Depends(auto_installed_libdep[0], auto_installed_bazel_node[0])
 
     return env.GetAutoInstalledFiles(bazel_node)
 
@@ -919,20 +948,83 @@ def auto_install_bazel(env, libdep, shlib_suffix):
             continue
 
         bazel_node = env.File(f"#/{line}")
-        bazel_node_debug = env.File(f"#/{line}$SEPDBG_SUFFIX")
+        debug_files = []
+        debug_suffix = ""
+        # This was copied from separate_debug.py
+        if env.TargetOSIs("darwin"):
+            # There isn't a lot of great documentation about the structure of dSYM bundles.
+            # For general bundles, see:
+            #
+            # https://developer.apple.com/library/archive/documentation/CoreFoundation/Conceptual/CFBundles/BundleTypes/BundleTypes.html
+            #
+            # But we expect to find two files in the bundle. An
+            # Info.plist file under Contents, and a file with the same
+            # name as the target under Contents/Resources/DWARF.
 
-        setattr(bazel_node_debug.attributes, "debug_file_for", bazel_node)
-        setattr(bazel_node.attributes, "separate_debug_files", [bazel_node_debug])
+            target0 = bazel_node
+            dsym_dir_name = target0.name + ".dSYM"
+            dsym_dir = env.Dir(f"#/{line}.dSYM")
+
+            dwarf_sym_with_debug = os.path.join(
+                dsym_dir.abspath, f"Contents/Resources/DWARF/{target0.name}_shared_with_debug.dylib"
+            )
+
+            # this handles shared libs or program binaries
+            if os.path.exists(dwarf_sym_with_debug):
+                dwarf_sym_name = f"{target0.name}.dylib"
+            else:
+                dwarf_sym_with_debug = os.path.join(
+                    dsym_dir.abspath, f"Contents/Resources/DWARF/{target0.name}_with_debug"
+                )
+                dwarf_sym_name = f"{target0.name}"
+
+            plist_file = env.File("Contents/Info.plist", directory=dsym_dir)
+            setattr(plist_file.attributes, "aib_effective_suffix", ".dSYM")
+            setattr(
+                plist_file.attributes,
+                "aib_additional_directory",
+                "{}/Contents".format(dsym_dir_name),
+            )
+
+            dwarf_dir = env.Dir("Contents/Resources/DWARF", directory=dsym_dir)
+
+            dwarf_file = env.File(dwarf_sym_with_debug, directory=dwarf_dir)
+            setattr(dwarf_file.attributes, "aib_effective_suffix", ".dSYM")
+            setattr(
+                dwarf_file.attributes,
+                "aib_additional_directory",
+                "{}/Contents/Resources/DWARF".format(dsym_dir_name),
+            )
+            setattr(dwarf_file.attributes, "aib_new_name", dwarf_sym_name)
+
+            debug_files.extend([plist_file, dwarf_file])
+            debug_suffix = ".dSYM"
+
+        elif env.TargetOSIs("posix"):
+            debug_suffix = env.subst("$SEPDBG_SUFFIX")
+            debug_file = env.File(f"#/{line}{debug_suffix}")
+            debug_files.append(debug_file)
+        elif env.TargetOSIs("windows"):
+            debug_suffix = ".pdb"
+            debug_file = env.File(f"#/{line}{debug_suffix}")
+            debug_files.append(debug_file)
+        else:
+            pass
+
+        for debug_file in debug_files:
+            setattr(debug_file.attributes, "debug_file_for", bazel_node)
+        setattr(bazel_node.attributes, "separate_debug_files", debug_files)
 
         auto_install_single_target(env, bazel_libdep, shlib_suffix, bazel_node)
 
         if env.GetAutoInstalledFiles(bazel_libdep):
-            auto_install_single_target(
-                env,
-                getattr(bazel_libdep.attributes, "separate_debug_files")[0],
-                env.subst("$SEPDBG_SUFFIX"),
-                bazel_node_debug,
-            )
+            for debug_file in debug_files:
+                auto_install_single_target(
+                    env,
+                    getattr(bazel_libdep.attributes, "separate_debug_files")[0],
+                    debug_suffix,
+                    debug_file,
+                )
 
     return env.GetAutoInstalledFiles(libdep)
 
@@ -997,7 +1089,11 @@ def add_libdeps_time(env, delate_time):
     count_of_libdeps_links += 1
 
 
-def prefetch_toolchain(env):
+def bazel_execroot(env):
+    return f'bazel-{os.path.basename(env.Dir("#").abspath)}'
+
+
+def prefetch_toolchain(env, version):
     setup_bazel_env_vars()
     setup_max_retry_attempts()
     bazel_bin_dir = (
@@ -1009,13 +1105,21 @@ def prefetch_toolchain(env):
         os.makedirs(bazel_bin_dir)
     Globals.bazel_executable = install_bazel(bazel_bin_dir)
     if platform.system() == "Linux" and not ARGUMENTS.get("CC") and not ARGUMENTS.get("CXX"):
-        exec_root = f'bazel-{os.path.basename(env.Dir("#").abspath)}'
-        if exec_root and not os.path.exists(f"{exec_root}/external/mongo_toolchain"):
+        exec_root = bazel_execroot(env)
+        if exec_root and not os.path.exists(f"{exec_root}/external/mongo_toolchain_{version}"):
             print("Prefetch the mongo toolchain...")
             try:
                 retry_call(
                     subprocess.run,
-                    [[Globals.bazel_executable, "build", "@mongo_toolchain", "--config=local"]],
+                    [
+                        [
+                            Globals.bazel_executable,
+                            "build",
+                            "mongo_toolchain",
+                            "--config=local",
+                            f"--//bazel/config:mongo_toolchain_version={version}",
+                        ]
+                    ],
                     fkwargs={
                         "env": {**os.environ.copy(), **Globals.bazel_env_variables},
                         "check": True,
@@ -1024,9 +1128,12 @@ def prefetch_toolchain(env):
                     exceptions=(subprocess.CalledProcessError,),
                 )
             except subprocess.CalledProcessError as ex:
-                print("ERROR: Bazel fetch failed!")
+                print(f"ERROR: Bazel fetch of {version} toolchain failed!")
                 print(ex)
-                print("Please ask about this in #ask-devprod-build slack channel.")
+                if version == "v4":
+                    print("Please ask about this in #ask-devprod-build slack channel.")
+                else:
+                    print(f"The {version} toolchain may not be supported on this platform.")
                 sys.exit(1)
 
         return exec_root
@@ -1038,6 +1145,7 @@ def exists(env: SCons.Environment.Environment) -> bool:
 
     write_workstation_bazelrc()
     env.AddMethod(prefetch_toolchain, "PrefetchToolchain")
+    env.AddMethod(bazel_execroot, "BazelExecroot")
     env.AddMethod(load_bazel_builders, "LoadBazelBuilders")
     return True
 
@@ -1218,7 +1326,8 @@ def generate(env: SCons.Environment.Environment) -> None:
         f"--compiler_type={env.ToolchainName()}",
         f'--opt={env.GetOption("opt")}',
         f'--dbg={env.GetOption("dbg") == "on"}',
-        f'--debug_symbols={env.GetOption("debug-symbols") == "on"}',
+        f'--debug_symbols={env.GetOption("debug-symbols") != "off"}',
+        f'--dbg_level={1 if env.GetOption("debug-symbols") == "minimal" else 2}',
         f'--thin_lto={env.GetOption("thin-lto") is not None}',
         f'--separate_debug={True if env.GetOption("separate-debug") == "on" else False}',
         f'--libunwind={env.GetOption("use-libunwind")}',
@@ -1233,7 +1342,6 @@ def generate(env: SCons.Environment.Environment) -> None:
         f'--use_glibcxx_debug={env.GetOption("use-glibcxx-debug") is not None}',
         f'--use_tracing_profiler={env.GetOption("use-tracing-profiler") == "on"}',
         f'--build_grpc={True if env["ENABLE_GRPC_BUILD"] else False}',
-        f'--build_otel={True if env["ENABLE_OTEL_BUILD"] else False}',
         f'--use_libcxx={env.GetOption("libc++") is not None}',
         f'--detect_odr_violations={env.GetOption("detect-odr-violations") is not None}',
         f"--linkstatic={linkstatic}",
@@ -1250,6 +1358,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         f'--ssl={"True" if env.GetOption("ssl") == "on" else "False"}',
         f'--js_engine={env.GetOption("js-engine")}',
         f'--use_sasl_client={env.GetOption("use-sasl-client") is not None}',
+        "--skip_archive=False",
         "--define",
         f"MONGO_VERSION={mongo_version}",
         "--define",
@@ -1261,7 +1370,7 @@ def generate(env: SCons.Environment.Environment) -> None:
     # Timeout linking at 8 minutes to retry with a lower concurrency.
     if os.environ.get("CI") is not None:
         bazel_internal_flags += [
-            "--link_timeout_8min=True",
+            "--link_timeout=True",
         ]
 
     if not os.environ.get("USE_NATIVE_TOOLCHAIN"):
@@ -1269,6 +1378,9 @@ def generate(env: SCons.Environment.Environment) -> None:
             f"--platforms=//bazel/platforms:{distro_or_os}_{normalized_arch}",
             f"--host_platform=//bazel/platforms:{distro_or_os}_{normalized_arch}",
         ]
+
+        if tc := env.get("MONGO_TOOLCHAIN_VERSION"):
+            bazel_internal_flags += [f"--//bazel/config:mongo_toolchain_version={tc}"]
 
     if "MONGO_ENTERPRISE_VERSION" in env:
         enterprise_features = env.GetOption("enterprise_features")
@@ -1280,11 +1392,6 @@ def generate(env: SCons.Environment.Environment) -> None:
                 f"--//bazel/config:enterprise_feature_{feature}=True"
                 for feature in enterprise_features.split(",")
             ]
-
-    # TODO SERVER-97028
-    # remove when ssl disabled builds are fixed
-    if env.GetOption("ssl") == "off":
-        bazel_internal_flags += ["--keep_going"]
 
     if env.GetOption("gcov") is not None:
         bazel_internal_flags += ["--collect_code_coverage"]

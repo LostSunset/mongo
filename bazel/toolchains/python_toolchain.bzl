@@ -1,20 +1,7 @@
 """Repository rules for rules_py_simple"""
 
 load("//bazel:utils.bzl", "retry_download_and_extract")
-
-_OS_MAP = {
-    "macos": "@platforms//os:osx",
-    "linux": "@platforms//os:linux",
-    "windows": "@platforms//os:windows",
-}
-
-_ARCH_MAP = {
-    "amd64": "@platforms//cpu:x86_64",
-    "aarch64": "@platforms//cpu:arm64",
-    "x86_64": "@platforms//cpu:x86_64",
-    "ppc64le": "@platforms//cpu:ppc",
-    "s390x": "@platforms//cpu:s390x",
-}
+load("//bazel/platforms:normalize.bzl", "ARCH_TO_PLATFORM_MAP", "OS_TO_PLATFORM_MAP")
 
 URLS_MAP = {
     "linux_aarch64": {
@@ -95,9 +82,57 @@ def _py_download(ctx):
         stripPrefix = "python",
     )
 
+    windows_python = False
+    for name in ctx.path(".").readdir():
+        if name.basename == "python.exe":
+            windows_python = True
+            break
+
+    if windows_python:
+        # windows does not have python version specific dir
+        usercustomize_file = "Libs/site-packages/usercustomize.py"
+    else:
+        # detect python version without execution
+        # this looks for the `python#.#` binary on macos and linux
+        # and extracts the version information at the end of the binary,
+        # starlark doesn't have regex support so had to roll our own
+        # parsing.
+        python_base_dir = ctx.path("bin")
+        bin_files = python_base_dir.readdir()
+        python_major_version = -1
+        python_minor_version = -1
+        for bin_file in bin_files:
+            basename = bin_file.basename
+            if basename.startswith("python"):
+                numeric = basename.replace("python", "")
+                versions = numeric.split(".")
+                if len(versions) == 2:
+                    numbers_only = True
+                    for version in versions:
+                        if not version.isdigit():
+                            numbers_only = False
+                    if numbers_only:
+                        python_major_version = versions[0]
+                        python_minor_version = versions[1]
+                        break
+
+        if python_major_version == -1 or python_minor_version == -1:
+            ctx.fail("Could not detect python versions")
+
+        usercustomize_file = "lib/python" + python_major_version + "." + python_minor_version + "/site-packages/usercustomize.py"
+
+    ctx.file(
+        usercustomize_file,
+        """
+import sys
+
+sys.dont_write_bytecode = True
+""",
+    )
+
     ctx.report_progress("generating build file")
-    os_constraint = _OS_MAP[os]
-    arch_constraint = _ARCH_MAP[arch]
+    os_constraint = OS_TO_PLATFORM_MAP[os]
+    arch_constraint = ARCH_TO_PLATFORM_MAP[arch]
 
     constraints = [os_constraint, arch_constraint]
 

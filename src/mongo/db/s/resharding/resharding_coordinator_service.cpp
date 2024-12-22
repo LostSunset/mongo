@@ -62,6 +62,7 @@
 #include "mongo/db/database_name.h"
 #include "mongo/db/dbdirectclient.h"
 #include "mongo/db/feature_flag.h"
+#include "mongo/db/generic_argument_util.h"
 #include "mongo/db/keypattern.h"
 #include "mongo/db/logical_time.h"
 #include "mongo/db/query/collation/collation_spec.h"
@@ -86,7 +87,6 @@
 #include "mongo/db/shard_id.h"
 #include "mongo/db/vector_clock.h"
 #include "mongo/db/write_concern_options.h"
-#include "mongo/executor/async_rpc_util.h"
 #include "mongo/idl/idl_parser.h"
 #include "mongo/logv2/log.h"
 #include "mongo/logv2/log_attr.h"
@@ -419,6 +419,8 @@ BSONObj createReshardingFieldsUpdateForOriginalNss(
                 coordinatorDoc.getCommonReshardingMetadata().getProvenance());
             originalEntryReshardingFields.setImplicitlyCreateIndex(
                 coordinatorDoc.getCommonReshardingMetadata().getImplicitlyCreateIndex());
+            originalEntryReshardingFields.setSkipVerification(
+                coordinatorDoc.getCommonReshardingMetadata().getSkipVerification());
 
             return BSON("$set" << BSON(CollectionType::kReshardingFieldsFieldName
                                        << originalEntryReshardingFields.toBSON()
@@ -869,6 +871,8 @@ CollectionType createTempReshardingCollectionType(
         coordinatorDoc.getCommonReshardingMetadata().getProvenance());
     tempEntryReshardingFields.setImplicitlyCreateIndex(
         coordinatorDoc.getCommonReshardingMetadata().getImplicitlyCreateIndex());
+    tempEntryReshardingFields.setSkipVerification(
+        coordinatorDoc.getCommonReshardingMetadata().getSkipVerification());
 
     auto recipientFields = constructRecipientFields(coordinatorDoc);
     tempEntryReshardingFields.setRecipientFields(std::move(recipientFields));
@@ -2314,14 +2318,24 @@ void ReshardingCoordinator::_calculateParticipantsAndChunksThenWriteToDisk() {
     }
     auto opCtx = _cancelableOpCtxFactory->makeOperationContext(&cc());
     ReshardingCoordinatorDocument updatedCoordinatorDoc = _coordinatorDoc;
+    auto provenance = updatedCoordinatorDoc.getCommonReshardingMetadata().getProvenance();
 
-    // If zones is not provided by the user, we should use the existing zones for
-    // this resharding operation.
-    if (updatedCoordinatorDoc.getForceRedistribution() &&
-        *updatedCoordinatorDoc.getForceRedistribution() && !updatedCoordinatorDoc.getZones()) {
-        auto zones = resharding::getZonesFromExistingCollection(
-            opCtx.get(), updatedCoordinatorDoc.getSourceNss());
-        updatedCoordinatorDoc.setZones(std::move(zones));
+    if (resharding::isUnshardCollection(provenance)) {
+        // Since the resulting collection of an unshardCollection operation cannot have zones, we do
+        // not need to account for existing zones in the original collection. Existing zones from
+        // the original collection will be deleted after the unsharding operation commits.
+        uassert(ErrorCodes::InvalidOptions,
+                "Cannot specify zones when unsharding a collection.",
+                !updatedCoordinatorDoc.getZones());
+    } else {
+        // If zones are not provided by the user, we should use the existing zones for
+        // this resharding operation.
+        if (updatedCoordinatorDoc.getForceRedistribution() &&
+            *updatedCoordinatorDoc.getForceRedistribution() && !updatedCoordinatorDoc.getZones()) {
+            auto zones = resharding::getZonesFromExistingCollection(
+                opCtx.get(), updatedCoordinatorDoc.getSourceNss());
+            updatedCoordinatorDoc.setZones(std::move(zones));
+        }
     }
 
     auto shardsAndChunks = _reshardingCoordinatorExternalState->calculateParticipantShardsAndChunks(
@@ -2348,7 +2362,6 @@ void ReshardingCoordinator::_calculateParticipantsAndChunksThenWriteToDisk() {
         updatedCoordinatorDoc.getSourceNss(),
         updatedCoordinatorDoc.getReshardingUUID());
 
-    auto provenance = updatedCoordinatorDoc.getCommonReshardingMetadata().getProvenance();
     auto isUnsplittable = _reshardingCoordinatorExternalState->getIsUnsplittable(
                               opCtx.get(), updatedCoordinatorDoc.getSourceNss()) ||
         (provenance && provenance.get() == ProvenanceEnum::kUnshardCollection);
