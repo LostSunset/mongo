@@ -1340,6 +1340,8 @@ functions:
       type: test
       params:
         binary: bash
+        include_expansions_in_env:
+          - evergreen_remote_exec
         args:
           - "src/evergreen/scons_compile.sh"
     - command: expansions.update
@@ -1429,6 +1431,8 @@ functions:
     type: test
     params:
       binary: bash
+      include_expansions_in_env:
+        - evergreen_remote_exec
       args:
         - "src/evergreen/bazel_compile.sh"
 
@@ -1445,6 +1449,12 @@ functions:
     - *bazel_compile_sh
 
   "bazel compile (msvc)":
+    - *get_version_expansions
+    - *apply_version_expansions
+    - *f_expansions_write
+    - *bazel_compile_sh
+
+  "bazel compile":
     - *get_version_expansions
     - *apply_version_expansions
     - *f_expansions_write

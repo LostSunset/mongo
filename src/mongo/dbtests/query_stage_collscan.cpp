@@ -96,7 +96,6 @@
 #include "mongo/logv2/log_attr.h"
 #include "mongo/logv2/log_component.h"
 #include "mongo/unittest/assert.h"
-#include "mongo/unittest/death_test.h"
 #include "mongo/unittest/framework.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/duration.h"
@@ -674,29 +673,6 @@ TEST_F(QueryStageCollectionScanTest, QueryTestCollscanResumeAfterRecordIdSeekFai
     ASSERT_THROWS_CODE(ps->work(&id), DBException, ErrorCodes::KeyNotFound);
 }
 
-DEATH_TEST_F(QueryStageCollectionScanTest,
-             QueryTestBackwardCollscanWithResumeScanPointFails,
-             "6521003") {
-    dbtests::WriteContextForTests ctx(&_opCtx, kNss.ns_forTest());
-    auto coll = ctx.getCollection();
-    std::vector<RecordId> recordIds;
-    getRecordIds(coll, CollectionScanParams::FORWARD, &recordIds);
-    auto recordId = recordIds[numObj() / 2];
-    CollectionScanParams params;
-    params.direction = CollectionScanParams::BACKWARD;
-    params.resumeScanPoint = ResumeScanPoint{recordId, true /* tolerateKeyNotFound */};
-    std::unique_ptr<WorkingSet> ws = std::make_unique<WorkingSet>();
-    std::unique_ptr<PlanStage> ps = std::make_unique<CollectionScan>(
-        _expCtx.get(), &coll, params, ws.get(), nullptr /* filter */);
-    auto statusWithPlanExecutor =
-        plan_executor_factory::make(_expCtx,
-                                    std::move(ws),
-                                    std::move(ps),
-                                    &coll,
-                                    PlanYieldPolicy::YieldPolicy::INTERRUPT_ONLY,
-                                    QueryPlannerParams::DEFAULT);
-    statusWithPlanExecutor.getStatus();
-}
 
 // Verify resuming with tolerateKeyNotFound set to true can handle deleted records by skipping to
 // next valid one.

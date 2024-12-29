@@ -33,13 +33,21 @@ parameters:
     description: "Patch id of evergreen patch to pull binaries from for testing."
 
   - key: bazel_build_tags
-    value: "--bazel-build-tag=dist_test --bazel-build-tag=mongo_library" # Every 4 hours starting at 0000 UTC
+    value: "--bazel-build-tag=dist_test --bazel-build-tag=mongo_library"
     description: "Default build tags"
+
+  - key: coverage_bazel_tags
+    value: "--remote_download_outputs=all --config=no-remote-exec"
+    description: "Default coverage bazel tags"
 
   - key: run_covered_tests
     description: >-
       When set to `true`, patch builds will run all tests compatible with some suite_A even if a more complex suite_A_B will
       also run the same test. For more information see SERVER-94816.
+
+  - key: evergreen_remote_exec
+    value: "off"
+    description: "disable remote exec in CI"
 
   ## Cron parameters.
   - key: project_required_suggested_cron

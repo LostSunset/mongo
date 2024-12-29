@@ -1469,6 +1469,9 @@ mongo_cc_unit_test(
     tags = [
         "compile_requires_large_memory_gcc",
         "mongo_unittest_second_group",
+        # State mismatch in sandbox in resharding_recipient_service_test.cpp
+        "code_coverage_quarantine",
+        "code_coverage_quarantine_SERVER-98847",
     ],
     deps = [
         ":analyze_shard_key_util",
@@ -1628,6 +1631,7 @@ mongo_cc_benchmark(
     srcs = [
         "placement_history_bm.cpp",
     ],
+    tags = ["first_half_bm"],
     deps = [
         ":config_server_test_fixture",
         ":sharding_catalog_manager",
@@ -1638,5 +1642,17 @@ mongo_cc_benchmark(
         "//src/mongo/db/session:logical_session_cache_noop",
         "//src/mongo/db/session:session_catalog_mongod",
         "//src/mongo/idl:server_parameter_test_util",
+    ],
+)
+
+mongo_cc_benchmark(
+    name = "migration_chunk_cloner_source_bm",
+    srcs = [
+        "migration_chunk_cloner_source_bm.cpp",
+    ],
+    deps = [
+        ":sharding_runtime_d",
+        "//src/mongo/db/auth:authmocks",
+        "//src/mongo/db/auth:authorization_manager_global",
     ],
 )

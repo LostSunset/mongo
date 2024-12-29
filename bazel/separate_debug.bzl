@@ -95,6 +95,20 @@ def get_transitive_dyn_libs(deps):
                     transitive_dyn_libs.append(library.dynamic_library)
     return transitive_dyn_libs
 
+def get_transitive_debug_files(deps):
+    """
+    Get a transitive list of all dynamic library files under a set of dependencies.
+    """
+
+    # TODO(SERVER-85819): Investigate to see if it's possible to merge the depset without looping over all transitive
+    # dependencies.
+    transitive_debugs = []
+    for dep in deps:
+        for input in dep[DefaultInfo].files.to_list():
+            if input.basename.endswith(".debug"):
+                transitive_debugs.append(input)
+    return transitive_debugs
+
 def symlink_shared_archive(ctx, shared_ext, static_ext):
     """
     Shared archives (.so.a/.dll.lib) have different extensions depending on the operating system.
@@ -311,7 +325,7 @@ def linux_extraction(ctx, cc_toolchain, inputs):
 
     provided_info = [
         DefaultInfo(
-            files = depset(outputs),
+            files = depset(outputs, transitive = [depset(get_transitive_debug_files(ctx.attr.deps))]),
             runfiles = dynamic_deps_runfiles,
             executable = output_bin if ctx.attr.type == "program" else None,
         ),
@@ -404,6 +418,8 @@ def windows_extraction(ctx, cc_toolchain, inputs):
     pdb = None
     if ctx.attr.type == "library":
         ext = ".lib"
+        if ctx.attr.cc_shared_library and ctx.attr.enable_pdb:
+            pdb = ctx.attr.cc_shared_library[OutputGroupInfo].pdb_file
     elif ctx.attr.type == "program":
         ext = ".exe"
         if ctx.attr.enable_pdb:
@@ -429,19 +445,33 @@ def windows_extraction(ctx, cc_toolchain, inputs):
 
             if ext == ".lib":
                 output_library = output
-            if ext == ".dll":
-                output_dynamic_library = output
-                # TODO support PDB outputs for dynamic windows builds when we are on bazel 7.2
-                # https://github.com/bazelbuild/bazel/pull/21900/files
 
             ctx.actions.symlink(
                 output = output,
                 target_file = input,
             )
 
+        if ctx.attr.cc_shared_library != None:
+            for file in ctx.attr.cc_shared_library.files.to_list():
+                if file.path.endswith(".dll"):
+                    basename = file.basename[:-len(WITH_DEBUG_SUFFIX + CC_SHARED_LIBRARY_SUFFIX + ".dll")]
+                    output = ctx.actions.declare_file(basename + ".dll")
+                    outputs.append(output)
+
+                    output_dynamic_library = output
+
+                    ctx.actions.symlink(
+                        output = output,
+                        target_file = file,
+                    )
+
         if pdb:
-            basename = input.basename[:-len(WITH_DEBUG_SUFFIX + ext)]
-            pdb_output = ctx.actions.declare_file(basename + ".pdb")
+            if ctx.attr.cc_shared_library != None:
+                basename = input.basename[:-len(WITH_DEBUG_SUFFIX + ".pdb")]
+                pdb_output = ctx.actions.declare_file(basename + ".dll.pdb")
+            else:
+                basename = input.basename[:-len(WITH_DEBUG_SUFFIX + ext)]
+                pdb_output = ctx.actions.declare_file(basename + ".pdb")
             outputs.append(pdb_output)
 
             ctx.actions.symlink(

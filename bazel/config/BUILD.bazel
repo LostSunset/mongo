@@ -1272,6 +1272,14 @@ selects.config_setting_group(
 )
 
 selects.config_setting_group(
+    name = "tsan_linkdynamic_required_settings",
+    match_all = [
+        ":shared_archive_or_link_dynamic",
+        ":not_windows",
+    ],
+)
+
+selects.config_setting_group(
     name = "linkdynamic_not_shared_archive",
     match_all = [
         ":linkstatic_disabled",
@@ -1537,7 +1545,7 @@ selects.config_setting_group(
     match_all = [
         ":tsan_enabled",
         ":libunwind_disabled",
-        ":linkdynamic_required_settings",
+        ":tsan_linkdynamic_required_settings",
     ],
 )
 
@@ -1648,6 +1656,22 @@ config_setting(
     flag_values = {
         "//bazel/config:shared_archive": "False",
     },
+)
+
+selects.config_setting_group(
+    name = "shared_archive_or_link_dynamic",
+    match_any = [
+        ":shared_archive_enabled",
+        ":linkstatic_disabled",
+    ],
+)
+
+selects.config_setting_group(
+    name = "shared_archive_enabled_gcc",
+    match_all = [
+        ":shared_archive_enabled",
+        ":compiler_type_gcc",
+    ],
 )
 
 # --------------------------------------

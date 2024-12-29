@@ -139,11 +139,17 @@ class Globals:
 
     @staticmethod
     def bazel_output(scons_node):
-        return Globals.scons2bazel_targets[str(scons_node).replace("\\", "/")]["bazel_output"]
+        scons_node = str(scons_node).replace("\\", "/")
+        if platform.system() != "Windows":
+            scons_node = scons_node.replace("/mongo_crypt_v1", "/libmongo_crypt_v1")
+        return Globals.scons2bazel_targets[scons_node]["bazel_output"]
 
     @staticmethod
     def bazel_target(scons_node):
-        return Globals.scons2bazel_targets[str(scons_node).replace("\\", "/")]["bazel_target"]
+        scons_node = str(scons_node).replace("\\", "/")
+        if platform.system() != "Windows":
+            scons_node = scons_node.replace("/mongo_crypt_v1", "/libmongo_crypt_v1")
+        return Globals.scons2bazel_targets[scons_node]["bazel_target"]
 
     @staticmethod
     def bazel_link_file(scons_node):
@@ -652,9 +658,25 @@ def create_bazel_builder(builder: SCons.Builder.Builder) -> SCons.Builder.Builde
     )
 
 
+def create_scons_and_bazel_builder(builder: SCons.Builder.Builder) -> SCons.Builder.Builder:
+    return SCons.Builder.Builder(
+        action=BazelCopyOutputsAction,
+        prefix=builder.prefix,
+        suffix=builder.suffix,
+        src_suffix=builder.src_suffix,
+        source_scanner=builder.source_scanner,
+        target_scanner=builder.target_scanner,
+        emitter=SCons.Builder.ListEmitter([builder.emitter, bazel_target_emitter]),
+    )
+
+
 # TODO delete this builder when we have testlist support in bazel
 def create_program_builder(env: SCons.Environment.Environment) -> None:
     env["BUILDERS"]["BazelProgram"] = create_bazel_builder(env["BUILDERS"]["Program"])
+
+
+def create_shared_library_builder(env: SCons.Environment.Environment) -> None:
+    env["BUILDERS"]["BazelSharedLibrary"] = create_bazel_builder(env["BUILDERS"]["SharedLibrary"])
 
 
 def get_default_cert_dir():
@@ -680,7 +702,12 @@ def validate_remote_execution_certs(env: SCons.Environment.Environment) -> bool:
     # Check engflow_auth existence
     if os.path.exists(get_default_engflow_auth_path()):
         # Check engflow_auth token presence
-        if os.path.exists(
+        appdata = os.getenv("APPDATA", "").replace("\\", "/")
+        if os.name == "nt" and os.path.exists(
+            os.path.expanduser(f"{appdata}/engflow_auth/tokens/sodalite.cluster.engflow.com")
+        ):
+            return True
+        elif os.path.exists(
             os.path.expanduser("~/.config/engflow_auth/tokens/sodalite.cluster.engflow.com")
         ):
             return True
@@ -1072,6 +1099,7 @@ def auto_archive_bazel(env, node, already_archived, search_stack):
 def load_bazel_builders(env):
     # === Builders ===
     create_program_builder(env)
+    create_shared_library_builder(env)
 
     if env.GetOption("ninja") != "disabled":
         env.NinjaRule(
@@ -1151,6 +1179,25 @@ def exists(env: SCons.Environment.Environment) -> bool:
 
 
 def handle_bazel_program_exception(env, target, outputs):
+    if sys.platform == "win32" and (
+        env.GetOption("link-model") == "dynamic-sdk"
+        or "cyrus_sasl_windows_test_plugin" in target
+        or "mongoca" in target
+    ):
+        is_shared_library = False
+        for bazel_output_file in outputs:
+            if os.path.splitext(bazel_output_file)[1] in set([".dll", ".pdb"]):
+                is_shared_library = True
+                scons_node_str = bazel_output_file.replace(
+                    f"{env['BAZEL_OUT_DIR']}/src", env.Dir("$BUILD_DIR").path.replace("\\", "/")
+                )
+
+                Globals.scons2bazel_targets[scons_node_str.replace("\\", "/")] = {
+                    "bazel_target": target,
+                    "bazel_output": bazel_output_file.replace("\\", "/"),
+                }
+        return is_shared_library
+
     prog_suf = env.subst("$PROGSUFFIX")
     dbg_suffix = ".pdb" if sys.platform == "win32" else env.subst("$SEPDBG_SUFFIX")
     bazel_program = False
@@ -1303,9 +1350,7 @@ def generate(env: SCons.Environment.Environment) -> None:
 
     # We don't support DLL generation on Windows, but need shared object generation in dynamic-sdk mode
     # on linux.
-    linkstatic = env.GetOption("link-model") in ["auto", "static"] or (
-        normalized_os == "windows" and env.GetOption("link-model") == "dynamic-sdk"
-    )
+    linkstatic = env.GetOption("link-model") in ["auto", "static", "dynamic-sdk"]
 
     allocator = env.get("MONGO_ALLOCATOR", "tcmalloc-google")
 
@@ -1358,7 +1403,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         f'--ssl={"True" if env.GetOption("ssl") == "on" else "False"}',
         f'--js_engine={env.GetOption("js-engine")}',
         f'--use_sasl_client={env.GetOption("use-sasl-client") is not None}',
-        "--skip_archive=False",
+        f'--skip_archive={env.GetOption("skip-archive") != "off" and normalized_os == "linux"}',
         "--define",
         f"MONGO_VERSION={mongo_version}",
         "--define",
@@ -1374,10 +1419,24 @@ def generate(env: SCons.Environment.Environment) -> None:
         ]
 
     if not os.environ.get("USE_NATIVE_TOOLCHAIN"):
-        bazel_internal_flags += [
-            f"--platforms=//bazel/platforms:{distro_or_os}_{normalized_arch}",
-            f"--host_platform=//bazel/platforms:{distro_or_os}_{normalized_arch}",
-        ]
+        if (
+            not is_local_execution(env)
+            and normalized_os == "linux"
+            and os.environ.get("evergreen_remote_exec") == "off"
+        ):
+            cache_silo = "_cache_silo"
+            bazel_internal_flags += [
+                f"--platforms=//bazel/platforms:{distro_or_os}_{normalized_arch}{cache_silo}",
+                f"--host_platform=//bazel/platforms:{distro_or_os}_{normalized_arch}{cache_silo}",
+                "--spawn_strategy=local",
+                "--jobs=auto",
+                "--remote_executor=",
+            ]
+        else:
+            bazel_internal_flags += [
+                f"--platforms=//bazel/platforms:{distro_or_os}_{normalized_arch}",
+                f"--host_platform=//bazel/platforms:{distro_or_os}_{normalized_arch}",
+            ]
 
         if tc := env.get("MONGO_TOOLCHAIN_VERSION"):
             bazel_internal_flags += [f"--//bazel/config:mongo_toolchain_version={tc}"]
@@ -1568,7 +1627,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         ["aquery"]
         + env["BAZEL_FLAGS_STR"]
         + [
-            'mnemonic("StripDebuginfo|ExtractDebuginfo|Symlink|IdlcGenerator|TemplateRenderer", (outputs("bazel-out/.*/bin/src/.*", deps(@//src/...))))'
+            "mnemonic('StripDebuginfo|ExtractDebuginfo|Symlink|IdlcGenerator|TemplateRenderer', (outputs('bazel-out/.*/bin/src/.*', deps(@//src/...))))"
         ]
     )
 

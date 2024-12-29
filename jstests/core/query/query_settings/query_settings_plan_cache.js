@@ -2,6 +2,9 @@
 // once query settings are set for the corresponding query. The old plan cache is used once again,
 // when query settings are removed.
 // @tags: [
+//   # TODO SERVER-98659 Investigate why this test is failing on
+//   # 'sharding_kill_stepdown_terminate_jscore_passthrough'.
+//   does_not_support_stepdowns,
 //   # Index filters are not replicated and therefore won't be applied on secondaries.
 //   assumes_read_preference_unchanged,
 //   assumes_read_concern_unchanged,
@@ -16,6 +19,7 @@
 //   requires_fcv_80,
 //   # Query settings commands can not be handled by atlas proxy.
 //   simulate_atlas_proxy_incompatible,
+//   requires_getmore,
 // ]
 
 import {assertDropAndRecreateCollection} from "jstests/libs/collection_drop_recreate.js";

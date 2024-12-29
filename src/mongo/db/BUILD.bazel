@@ -830,6 +830,9 @@ mongo_cc_library(
     srcs = [
         "transaction_resources_init_non_mongod.cpp",
     ],
+    tags = [
+        "mongo_crypt",
+    ],
     deps = [
         ":service_context",
         ":shard_role_api",
@@ -2258,6 +2261,9 @@ mongo_cc_library(
     hdrs = [
         "service_context_test_fixture.h",
     ],
+    tags = [
+        "mongo_crypt",
+    ],
     deps = [
         ":service_context",
         "//src/mongo/client:clientdriver_network",
@@ -2782,6 +2788,7 @@ mongo_cc_unit_test(
         "//src/mongo/db/repl:repl_coordinator_interface",
         "//src/mongo/db/repl:replmocks",
         "//src/mongo/db/repl:storage_interface_impl",
+        "//src/mongo/idl:server_parameter_test_util",
         "//src/mongo/shell:kms_idl",
     ],
 )
@@ -4189,7 +4196,9 @@ mongo_cc_benchmark(
     srcs = [
         "commands_bm.cpp",
     ],
-    tags = ["first_half_bm"],
+    tags = [
+        "first_half_bm",
+    ],
     deps = [
         ":server_base",
     ],
