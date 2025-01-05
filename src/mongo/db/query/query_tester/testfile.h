@@ -54,8 +54,9 @@ inline constexpr auto kTmpFailureFile = "tmp_failed_queries";
 
 class QueryFile {
 public:
-    QueryFile(std::filesystem::path filePath)
+    QueryFile(std::filesystem::path filePath, const bool optimizationsOff)
         : _filePath(filePath),
+          _optimizationsOff(optimizationsOff),
           _expectedPath(std::filesystem::path{filePath}.replace_extension(".results")),
           _actualPath(std::filesystem::path{filePath}.replace_extension(".actual")),
           _failedQueryCount(0) {}
@@ -149,7 +150,8 @@ protected:
     std::vector<CollectionSpec> _collectionsNeeded;
     std::string _databaseNeeded;
     std::vector<Test> _tests;
-    size_t _testsRun;
+    size_t _testsRun = 0;
+    const bool _optimizationsOff;
     std::filesystem::path _expectedPath;
     std::filesystem::path _actualPath;
     struct {

@@ -44,6 +44,7 @@
 #include "mongo/util/testing_proctor.h"
 #include "mongo/util/version.h"
 
+#include "command_helpers.h"
 #include "mock_version_info.h"
 #include "testfile.h"
 
@@ -127,19 +128,26 @@ int runTestProgram(const std::vector<TestSpec> testsToRun,
                    const bool createAllIndices,
                    const WriteOutOptions outOpt,
                    const ModeOption mode,
+                   const bool optimizationsOff,
                    const bool populateAndExit,
                    const ErrorLogLevel errorLogLevel,
                    const DiffStyle diffStyle) {
     // Run the tests.
     auto versionInfo = MockVersionInfo{};
     auto conn = buildConn(uriString, &versionInfo, mode);
+
+    // Append _id to setWindowFields sort to make queries deterministic.
+    auto deterministicSetWindowFields =
+        fromFuzzerJson("{setParameter: 1, internalQueryAppendIdToSetWindowFieldsSort: true}");
+    runCommandAssertOK(conn.get(), deterministicSetWindowFields, "admin");
+
     // Track collections loaded in the previous test file.
     auto prevFileCollections = std::set<CollectionSpec>{};
     auto failedTestFiles = std::vector<std::filesystem::path>{};
     auto failedQueryCount = size_t{0};
     auto totalTestsRun = size_t{0};
     for (const auto& [testPath, startRange, endRange] : testsToRun) {
-        auto currFile = query_tester::QueryFile(testPath);
+        auto currFile = query_tester::QueryFile(testPath, optimizationsOff);
 
         // Treat data load errors as failures, too.
         try {
@@ -250,6 +258,9 @@ void printHelpString() {
          "[run, compare, normalize]. Specify whether to just run and record "
          "results; expect all test files to specify results (default); or ensure that "
          "output results are correctly normalized."},
+        {"--opt-off",
+         "Disables optimizations and pushing down to the find layer if queries don't require an "
+         "index to be run."},
         {"--out",
          "[result, oneline]. Write out results for each test file after running "
          "tests in run or normalize mode. Results files end in `.results` "
@@ -294,6 +305,7 @@ int queryTesterMain(const int argc, const char** const argv) {
     auto loadOpt = false;
     auto mongoURIString = boost::optional<std::string>{};
     auto mode = ModeOption::Compare;  // Default.
+    auto optimizationsOff = false;
     auto outOpt = WriteOutOptions::kNone;
     auto populateAndExit = false;
     auto verbose = false;
@@ -316,6 +328,8 @@ int queryTesterMain(const int argc, const char** const argv) {
             assertNextArgExists(parsedArgs, argNum, "--mode");
             mode = stringToModeOption(parsedArgs[argNum + 1]);
             ++argNum;
+        } else if (parsedArgs[argNum] == "--opt-off") {
+            optimizationsOff = true;
         } else if (parsedArgs[argNum] == "--out") {
             assertNextArgExists(parsedArgs, argNum, "--out");
             outOpt = stringToWriteOutOpt(parsedArgs[argNum + 1]);
@@ -421,6 +435,7 @@ int queryTesterMain(const int argc, const char** const argv) {
                               createAllIndices,
                               outOpt,
                               mode,
+                              optimizationsOff,
                               populateAndExit,
                               errorLogLevel,
                               diffStyle);

@@ -79,8 +79,8 @@ _DISTRO_PATTERN_MAP = {
 }
 
 _S3_HASH_MAPPING = {
-    "https://mdb-build-public.s3.amazonaws.com/bazel-binaries/bazel-7.2.1-ppc64le": "4ecc7f1396b8d921c6468b34cc8ed356c4f2dbe8a154c25d681a61ccb5dfc9cb",
-    "https://mdb-build-public.s3.amazonaws.com/bazel-binaries/bazel-7.2.1-s390x": "2f5f7fd747620d96e885766a4027347c75c0f455c68219211a00e72fc6413be9",
+    "https://mdb-build-public.s3.amazonaws.com/bazel-binaries/bazel-7.4.1-ppc64le": "f8e95c5a840f18bcec9de689bdeb7c3a4409b0580cbeadf0266534c09332b8d8",
+    "https://mdb-build-public.s3.amazonaws.com/bazel-binaries/bazel-7.4.1-s390x": "3c48f892520eeeab5a706238c2aaccdb9afd3ed49a3757c23187d4ba089ecb58",
     "https://mdb-build-public.s3.amazonaws.com/bazelisk-binaries/v1.19.0/bazelisk-darwin-amd64": "f2ba5f721a995b54bab68c6b76a340719888aa740310e634771086b6d1528ecd",
     "https://mdb-build-public.s3.amazonaws.com/bazelisk-binaries/v1.19.0/bazelisk-darwin-arm64": "69fa21cd2ccffc2f0970c21aa3615484ba89e3553ecce1233a9d8ad9570d170e",
     "https://mdb-build-public.s3.amazonaws.com/bazelisk-binaries/v1.19.0/bazelisk-linux-amd64": "d28b588ac0916abd6bf02defb5433f6eddf7cba35ffa808eabb65a44aab226f7",
@@ -1387,6 +1387,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         f'--use_glibcxx_debug={env.GetOption("use-glibcxx-debug") is not None}',
         f'--use_tracing_profiler={env.GetOption("use-tracing-profiler") == "on"}',
         f'--build_grpc={True if env["ENABLE_GRPC_BUILD"] else False}',
+        f'--build_otel={True if env["ENABLE_OTEL_BUILD"] else False}',
         f'--use_libcxx={env.GetOption("libc++") is not None}',
         f'--detect_odr_violations={env.GetOption("detect-odr-violations") is not None}',
         f"--linkstatic={linkstatic}",
@@ -1410,6 +1411,7 @@ def generate(env: SCons.Environment.Environment) -> None:
         f"MONGO_DISTMOD={env['MONGO_DISTMOD']}",
         "--compilation_mode=dbg",  # always build this compilation mode as we always build with -g
         "--dynamic_mode=off",
+        "--fission=no",
     ]
 
     # Timeout linking at 8 minutes to retry with a lower concurrency.
@@ -1422,7 +1424,8 @@ def generate(env: SCons.Environment.Environment) -> None:
         if (
             not is_local_execution(env)
             and normalized_os == "linux"
-            and os.environ.get("evergreen_remote_exec") == "off"
+            and os.environ.get("evergreen_remote_exec") != "on"
+            and os.environ.get("CI") is not None
         ):
             cache_silo = "_cache_silo"
             bazel_internal_flags += [

@@ -144,6 +144,7 @@ mongo_cc_library(
         "//src/mongo/rpc/metadata:impersonated_user_metadata.cpp",
     ],
     hdrs = [
+        "//src/mongo/rpc/metadata:audit_user_attrs.h",
         "//src/mongo/rpc/metadata:impersonated_user_metadata.h",
     ],
     deps = [
@@ -180,10 +181,10 @@ mongo_cc_library(
     deps = [
         ":message",  # TODO(SERVER-93876): Remove.
         "//src/mongo:base",  # TODO(SERVER-93876): Remove.
-        "//src/mongo/bson/mutable:mutable_bson",
         "//src/mongo/bson/util:bson_extract",  # TODO(SERVER-93876): Remove.
         "//src/mongo/db:server_base",
         "//src/mongo/db:service_context",  # TODO(SERVER-93876): Remove.
+        "//src/mongo/db/exec/mutable_bson",
         "//src/mongo/util:pcre_wrapper",
     ],
 )
@@ -244,10 +245,8 @@ mongo_cc_unit_test(
         ":rewrite_state_change_errors",
         ":rpc",
         "//src/mongo/client:clientdriver_minimal",
-        "//src/mongo/db:server_base",
         "//src/mongo/db:service_context_non_d",
         "//src/mongo/db:service_context_test_fixture",
-        "//src/mongo/db/auth",
         "//src/mongo/db/auth:authmocks",
         "//src/mongo/idl:server_parameter_test_util",
         "//src/third_party/wiredtiger:wiredtiger_checksum",

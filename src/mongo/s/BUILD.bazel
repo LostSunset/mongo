@@ -1153,6 +1153,7 @@ mongo_cc_unit_test(
     ],
     tags = [
         "compile_requires_large_memory_gcc",
+        "compile_requires_large_memory_sanitizer",
         "mongo_unittest_third_group",
     ],
     deps = [
@@ -1209,6 +1210,7 @@ mongo_cc_benchmark(
         "//src/mongo/db:profiler_bm_fixture.h",
         "//src/mongo/db:service_entry_point_bm_fixture.h",
     ],
+    tags = ["sep_bm"],
     deps = [
         ":startup_initialization",
         "//src/mongo/db:read_write_concern_defaults_mock",

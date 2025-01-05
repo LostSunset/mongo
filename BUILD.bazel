@@ -323,17 +323,17 @@ mongo_unittest_install(
 
 mongo_unittest_install(
     name = "bson_mutable_test",
-    srcs = ["//src/mongo/bson/mutable:bson_mutable_test"],
+    srcs = ["//src/mongo/db/exec/mutable_bson:bson_mutable_test"],
 )
 
 mongo_unittest_install(
     name = "bson_mutable_test-mutable_bson_algo_test",
-    srcs = ["//src/mongo/bson/mutable:bson_mutable_test"],
+    srcs = ["//src/mongo/db/exec/mutable_bson:bson_mutable_test"],
 )
 
 mongo_unittest_install(
     name = "bson_mutable_test-mutable_bson_test",
-    srcs = ["//src/mongo/bson/mutable:bson_mutable_test"],
+    srcs = ["//src/mongo/db/exec/mutable_bson:bson_mutable_test"],
 )
 
 mongo_unittest_install(
@@ -2807,11 +2807,6 @@ mongo_unittest_install(
 )
 
 mongo_unittest_install(
-    name = "audit_test-audit_client_attrs_test",
-    srcs = ["//src/mongo/db/modules/enterprise/src/audit:audit_test"],
-)
-
-mongo_unittest_install(
     name = "audit_test-audit_enc_comp_manager_test",
     srcs = ["//src/mongo/db/modules/enterprise/src/audit:audit_test"],
 )
@@ -3289,6 +3284,16 @@ mongo_unittest_install(
 mongo_unittest_install(
     name = "mongocxx_util_test-mongocxx_util_test",
     srcs = ["//src/mongo/db/modules/enterprise/src/streams/exec/tests:mongocxx_util_test"],
+)
+
+mongo_unittest_install(
+    name = "processing_time_windows_test",
+    srcs = ["//src/mongo/db/modules/enterprise/src/streams/exec/tests:processing_time_windows_test"],
+)
+
+mongo_unittest_install(
+    name = "processing_time_windows_test-processing_time_windows_test",
+    srcs = ["//src/mongo/db/modules/enterprise/src/streams/exec/tests:processing_time_windows_test"],
 )
 
 mongo_unittest_install(
@@ -8519,4 +8524,9 @@ mongo_unittest_install(
 mongo_unittest_install(
     name = "db_query_test-gen_filter_test",
     srcs = ["//src/mongo/db/query:db_query_test"],
+)
+
+mongo_unittest_install(
+    name = "audit_test-audit_client_observer_test",
+    srcs = ["//src/mongo/db/modules/enterprise/src/audit:audit_test"],
 )

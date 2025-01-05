@@ -118,7 +118,8 @@ void PlanYieldPolicy::resetTimer() {
 }
 
 Status PlanYieldPolicy::yieldOrInterrupt(OperationContext* opCtx,
-                                         std::function<void()> whileYieldingFn) {
+                                         std::function<void()> whileYieldingFn,
+                                         RestoreContext::RestoreType restoreType) {
     invariant(opCtx);
 
     // After we finish yielding (or in any early return), call resetTimer() to prevent yielding
@@ -138,11 +139,10 @@ Status PlanYieldPolicy::yieldOrInterrupt(OperationContext* opCtx,
     _forceYield = false;
 
     for (int attempt = 1; true; attempt++) {
+        // Saving and restoring can modify '_yieldable', so we make a copy before we start.
+        // This copying cannot throw.
+        const std::variant<const Yieldable*, YieldThroughAcquisitions> yieldable = _yieldable;
         try {
-            // Saving and restoring can modify '_yieldable', so we make a copy before we start.
-            // This copying cannot throw.
-            const auto yieldable = _yieldable;
-
             // This sets _yieldable to a nullptr.
             saveState(opCtx);
 
@@ -181,12 +181,14 @@ Status PlanYieldPolicy::yieldOrInterrupt(OperationContext* opCtx,
                 }
             }
 
-            restoreState(opCtx,
-                         holds_alternative<const Yieldable*>(yieldable)
-                             ? get<const Yieldable*>(yieldable)
-                             : nullptr);
+            // This copies 'yieldable' back to '_yieldable' where needed.
+            auto yieldablePtr = get_if<const Yieldable*>(&yieldable);
+            restoreState(opCtx, yieldablePtr ? *yieldablePtr : nullptr, restoreType);
             return Status::OK();
         } catch (const StorageUnavailableException& e) {
+            // This copies 'yieldable' back to '_yieldable' where needed.
+            auto yieldablePtr = get_if<const Yieldable*>(&yieldable);
+            restoreState(opCtx, yieldablePtr ? *yieldablePtr : nullptr, restoreType);
             if (_callbacks) {
                 _callbacks->handledWriteConflict(opCtx);
             }

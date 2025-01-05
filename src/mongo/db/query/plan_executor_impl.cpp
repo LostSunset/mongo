@@ -201,6 +201,7 @@ void PlanExecutorImpl::saveState() {
     invariant(_currentState == kUsable || _currentState == kSaved);
 
     if (!isMarkedAsKilled()) {
+        // The following call can throw, leaving '_currentState' unchanged.
         _root->saveState();
     }
 
@@ -214,17 +215,23 @@ void PlanExecutorImpl::restoreState(const RestoreContext& context) {
     try {
         restoreStateWithoutRetrying(context, context.collection());
     } catch (const StorageUnavailableException&) {
-        if (!_yieldPolicy->canAutoYield())
+        if (!_yieldPolicy->canAutoYield()) {
             throw;
+        }
 
         // Handles retries by calling restoreStateWithoutRetrying() in a loop.
-        uassertStatusOK(_yieldPolicy->yieldOrInterrupt(getOpCtx()));
+        uassertStatusOK(_yieldPolicy->yieldOrInterrupt(
+            getOpCtx(), nullptr /* whileYieldingFn */, context.type()));
     }
 }
 
 void PlanExecutorImpl::restoreStateWithoutRetrying(const RestoreContext& context,
                                                    const Yieldable* yieldable) {
-    invariant(_currentState == kSaved);
+    // If a StorageUnavailableException has been caught, this call can be a retry. Depending on
+    // where the exception was thrown, the state may not have been saved, in which case NO-OP.
+    if (_currentState != kSaved) {
+        return;
+    }
 
     if (!_yieldPolicy->usesCollectionAcquisitions()) {
         _yieldPolicy->setYieldable(yieldable);
@@ -357,7 +364,8 @@ PlanExecutor::ExecState PlanExecutorImpl::_getNextImpl(Snapshotted<Document>* ob
         };
 
         if (_yieldPolicy->shouldYieldOrInterrupt(_opCtx)) {
-            uassertStatusOK(_yieldPolicy->yieldOrInterrupt(_opCtx, whileYieldingFn));
+            uassertStatusOK(_yieldPolicy->yieldOrInterrupt(
+                _opCtx, whileYieldingFn, RestoreContext::RestoreType::kYield));
         }
 
         WorkingSetID id = WorkingSet::INVALID_ID;
