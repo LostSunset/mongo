@@ -485,6 +485,11 @@ WiredTigerKVEngine::WiredTigerKVEngine(const std::string& canonicalName,
         ss << "prefetch=(available=true,default=false),";
     }
 
+    if (!wiredTigerGlobalOptions.liveRestoreSource.empty() && !_ephemeral) {
+        ss << "live_restore=(enabled=true,path=\"" << wiredTigerGlobalOptions.liveRestoreSource
+           << "\"),";
+    }
+
     ss << WiredTigerCustomizationHooks::get(getGlobalServiceContext())
               ->getTableCreateConfig("system");
     ss << WiredTigerExtensions::get(getGlobalServiceContext())->getOpenExtensionsConfig();
@@ -816,15 +821,8 @@ void WiredTigerKVEngine::cleanShutdown() {
 
     auto startTime = Date_t::now();
     LOGV2(4795902, "Closing WiredTiger", "closeConfig"_attr = closeConfig);
-    int ret = _conn->close(_conn, closeConfig.c_str());
-    if (ret == EBUSY) {
-        LOGV2(9513600,
-              "Encountered EBUSY trying to close WiredTiger",
-              "duration"_attr = Date_t::now() - startTime);
-    } else {
-        fassert(9513601, ret == 0);
-        LOGV2(4795901, "WiredTiger closed", "duration"_attr = Date_t::now() - startTime);
-    }
+    invariantWTOK(_conn->close(_conn, closeConfig.c_str()), nullptr);
+    LOGV2(4795901, "WiredTiger closed", "duration"_attr = Date_t::now() - startTime);
     _conn = nullptr;
 }
 
@@ -1015,7 +1013,7 @@ Status WiredTigerKVEngine::beginBackup() {
 void WiredTigerKVEngine::endBackup() {
     if (_sessionCache->isShuttingDown()) {
         // There could be a race with clean shutdown which unconditionally closes all the sessions.
-        _backupSession->_session = nullptr;  // Prevent calling _session->close() in destructor.
+        _backupSession->dropSessionBeforeDeleting();
     }
     _backupSession.reset();
 }
@@ -2095,7 +2093,7 @@ std::vector<std::string> WiredTigerKVEngine::getAllIdents(RecoveryUnit& ru) cons
     int ret;
     // No need for a metadata:create cursor, since it gathers extra information and is slower.
     WiredTigerCursor cursor(
-        WiredTigerRecoveryUnit::get(ru), "metadata:", WiredTigerSession::kMetadataTableId, false);
+        WiredTigerRecoveryUnit::get(ru), "metadata:", WiredTigerUtil::kMetadataTableId, false);
     WT_CURSOR* c = cursor.get();
     if (!c)
         return all;

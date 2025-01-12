@@ -169,7 +169,7 @@ feature_flags:
     featureFlagLookupEncryptionSchemasFLE:
       description: "Feature flag to support multiple FLE schemas with $lookup"
       cpp_varname: gFeatureFlagLookupEncryptionSchemasFLE
-      default: false
+      default: true
       shouldBeFCVGated: false
 
     featureFlagRankFusionBasic:
@@ -177,7 +177,7 @@ feature_flags:
                     milestone of Vector Search Hybrid Scoring)"
       cpp_varname: gFeatureFlagRankFusionBasic
       default: false
-      shouldBeFCVGated: false
+      shouldBeFCVGated: true
 
     featureFlagRankFusionFull:
       description: "Feature flag to finish up $rankFusion features as well as introduce $score and
@@ -192,4 +192,11 @@ feature_flags:
       cpp_varname: gFeatureFlagSearchHybridScoringFull
       default: false
       shouldBeFCVGated: true
+    
+    featureFlagQueryMemoryTracking:
+      description: "Feature flag to enable current and high watermark memory usage tracking for 
+                    queries' blocking stages."
+      cpp_varname: gFeatureFlagQueryMemoryTracking
+      default: false
+      shouldBeFCVGated: false
 

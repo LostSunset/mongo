@@ -436,7 +436,7 @@ void CurOp::setEndOfOpMetrics(long long nreturned) {
         }
 
         if (_debug.storageStats) {
-            _debug.additiveMetrics.aggregateStorageStats(*_debug.storageStats);
+            metrics.aggregateStorageStats(*_debug.storageStats);
         }
     }
 }
@@ -465,7 +465,7 @@ ProgressMeter& CurOp::setProgress(WithLock lk,
     return _progressMeter.value();
 }
 
-void CurOp::updateStatsOnTransactionUnstash() {
+void CurOp::updateStatsOnTransactionUnstash(ClientLock&) {
     // Store lock stats and storage metrics from the locker and recovery unit after unstashing.
     // These stats have accrued outside of this CurOp instance so we will ignore/subtract them when
     // reporting on this operation.
@@ -475,7 +475,7 @@ void CurOp::updateStatsOnTransactionUnstash() {
     _resourceStatsBase->addForUnstash(getAdditiveResourceStats(boost::none));
 }
 
-void CurOp::updateStatsOnTransactionStash() {
+void CurOp::updateStatsOnTransactionStash(ClientLock&) {
     // Store lock stats and storage metrics that happened during this operation before the locker
     // and recovery unit are stashed. We take the delta of the stats before stashing and the base
     // stats which includes the snapshot of stats when it was unstashed. This stats delta on
@@ -486,7 +486,7 @@ void CurOp::updateStatsOnTransactionStash() {
     _resourceStatsBase->subtractForStash(getAdditiveResourceStats(boost::none));
 }
 
-void CurOp::updateStorageMetricsOnRecoveryUnitChange() {
+void CurOp::updateStorageMetricsOnRecoveryUnitChange(ClientLock&) {
     auto storageMetrics = shard_role_details::getRecoveryUnit(opCtx())->getStorageMetrics();
     if (!storageMetrics.isEmpty()) {
         if (!_resourceStatsBase) {
@@ -1257,6 +1257,13 @@ void OpDebug::report(OperationContext* opCtx,
     pAttrs->add("numYields", curop.numYields());
     OPDEBUG_TOATTR_HELP_OPTIONAL("nreturned", additiveMetrics.nreturned);
 
+    // Add sorter diagnostics only when spills occur.
+    if (sortSpills) {
+        pAttrs->add("sortSpills", sortSpills);
+        pAttrs->add("sortSpillBytes", sortSpillBytes);
+        pAttrs->add("sortTotalDataSizeBytes", sortTotalDataSizeBytes);
+    }
+
     if (planCacheShapeHash) {
         pAttrs->addDeepCopy("planCacheShapeHash", zeroPaddedHex(*planCacheShapeHash));
     }
@@ -1365,7 +1372,7 @@ void OpDebug::report(OperationContext* opCtx,
         pAttrs->add("remoteOpWaitMillis", durationCount<Milliseconds>(*remoteOpWaitTime));
     }
 
-    // Extract admisson and execution control queueing stats from AdmissionContext stored on opCtx
+    // Extract admission and execution control queueing stats from AdmissionContext stored on opCtx
     TicketHolderQueueStats queueingStats(opCtx);
     pAttrs->add("queues", queueingStats.toBson());
 
@@ -1469,6 +1476,13 @@ void OpDebug::append(OperationContext* opCtx,
 
     b.appendNumber("numYield", curop.numYields());
     OPDEBUG_APPEND_OPTIONAL(b, "nreturned", additiveMetrics.nreturned);
+
+    // Add sorter diagnostics only when spills occur.
+    if (sortSpills) {
+        b.append("sortSpills", sortSpills);
+        b.append("sortSpillBytes", sortSpillBytes);
+        b.append("sortTotalDataSizeBytes", static_cast<long long>(sortTotalDataSizeBytes));
+    }
 
     if (planCacheShapeHash) {
         b.append("planCacheShapeHash", zeroPaddedHex(*planCacheShapeHash));

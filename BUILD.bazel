@@ -4197,11 +4197,6 @@ mongo_unittest_install(
 )
 
 mongo_unittest_install(
-    name = "db_pipeline_test-spillable_cache_test",
-    srcs = ["//src/mongo/db/pipeline:db_pipeline_test"],
-)
-
-mongo_unittest_install(
     name = "db_pipeline_test-window_function_add_to_set_test",
     srcs = ["//src/mongo/db/pipeline:db_pipeline_test"],
 )
@@ -8457,6 +8452,11 @@ mongo_unittest_install(
 )
 
 mongo_unittest_install(
+    name = "stacktrace_libunwind_test-stacktrace_libunwind_deadlock_test",
+    srcs = ["//src/mongo/util:stacktrace_libunwind_test"],
+)
+
+mongo_unittest_install(
     name = "stacktrace_libunwind_test-stacktrace_libunwind_test",
     srcs = ["//src/mongo/util:stacktrace_libunwind_test"],
 )
@@ -8502,6 +8502,16 @@ mongo_unittest_install(
 )
 
 mongo_unittest_install(
+    name = "tracing_test",
+    srcs = ["//src/mongo/tracing:tracing_test"],
+)
+
+mongo_unittest_install(
+    name = "tracing_test-trace_initialization_test",
+    srcs = ["//src/mongo/tracing:tracing_test"],
+)
+
+mongo_unittest_install(
     name = "watchdog_test",
     srcs = ["//src/mongo/watchdog:watchdog_test"],
 )
@@ -8527,6 +8537,31 @@ mongo_unittest_install(
 )
 
 mongo_unittest_install(
+    name = "db_spilling_test",
+    srcs = ["//src/mongo/db/pipeline/spilling:db_spilling_test"],
+)
+
+mongo_unittest_install(
+    name = "db_spilling_test-spillable_deque_test",
+    srcs = ["//src/mongo/db/pipeline/spilling:db_spilling_test"],
+)
+
+mongo_unittest_install(
+    name = "db_spilling_test-spillable_map_test",
+    srcs = ["//src/mongo/db/pipeline/spilling:db_spilling_test"],
+)
+
+mongo_unittest_install(
+    name = "db_spilling_test-record_store_batch_writer_test",
+    srcs = ["//src/mongo/db/pipeline/spilling:db_spilling_test"],
+)
+
+mongo_unittest_install(
     name = "audit_test-audit_client_observer_test",
     srcs = ["//src/mongo/db/modules/enterprise/src/audit:audit_test"],
+)
+
+mongo_unittest_install(
+    name = "s_test-chunk_manager_test",
+    srcs = ["//src/mongo/s:s_test"],
 )

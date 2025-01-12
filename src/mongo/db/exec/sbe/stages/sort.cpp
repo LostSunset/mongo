@@ -31,13 +31,9 @@
 #include <absl/container/node_hash_map.h>
 #include <absl/meta/type_traits.h>
 #include <cstdint>
-#include <deque>
-#include <exception>
 #include <limits>
 #include <string>
-#include <system_error>
 
-#include "mongo/base/error_codes.h"
 #include "mongo/base/string_data.h"
 #include "mongo/bson/bsonobj.h"
 #include "mongo/bson/bsonobjbuilder.h"
@@ -47,16 +43,8 @@
 #include "mongo/db/exec/sbe/values/row.h"
 #include "mongo/db/sorter/sorter.h"
 #include "mongo/db/storage/storage_options.h"
-#include "mongo/platform/atomic_word.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/str.h"
-
-namespace {
-std::string nextFileName() {
-    static mongo::AtomicWord<unsigned> sortExecutorFileCounter;
-    return "extsort-sort-sbe." + std::to_string(sortExecutorFileCounter.fetchAndAdd(1));
-}
-}  // namespace
 
 #include "mongo/db/sorter/sorter.cpp"
 
@@ -328,7 +316,7 @@ void SortStage::SortImpl<KeyRow, ValueRow>::makeSorter() {
         return 0;
     };
 
-    _sorter.reset(Sorter<KeyRow, ValueRow>::make(opts, comp, {}));
+    _sorter = Sorter<KeyRow, ValueRow>::make(opts, comp, {});
     _mergeIt.reset();
 }
 
@@ -371,7 +359,7 @@ void SortStage::SortImpl<KeyRow, ValueRow>::open(bool reOpen) {
     }
 
     _stage._specificStats.totalDataSizeBytes += _sorter->stats().bytesSorted();
-    _mergeIt.reset(_sorter->done());
+    _mergeIt = _sorter->done();
     _stage._specificStats.spills += _sorter->stats().spilledRanges();
     _stage._specificStats.keysSorted += _sorter->stats().numSorted();
     if (_stage._sorterFileStats) {

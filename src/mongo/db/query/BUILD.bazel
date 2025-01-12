@@ -325,6 +325,7 @@ mongo_cc_library(
         "plan_ranker_mode.cpp",
         "query_feature_flags_gen",
         "query_knobs_gen",
+        "sampling_ce_method.cpp",
         "sampling_confidence_interval.cpp",
         "//src/mongo/db/query/plan_cache:sbe_plan_cache_on_parameter_change.cpp",
         "//src/mongo/db/query/query_stats:query_stats_on_parameter_change.cpp",
@@ -896,12 +897,6 @@ mongo_cc_unit_test(
         "//src/mongo/db/catalog:catalog_test_fixture",
         "//src/mongo/db/collection_crud",
     ],
-)
-
-# TODO(SERVER-96860): Remove cycle created by moving //src/mongo/db/query:explain_options.h to //src/mongo/db/query:common_query_enums_and_helpers
-filegroup(
-    name = "explain_options_hdrs",
-    srcs = [":explain_options.h"],
 )
 
 mongo_cc_benchmark(

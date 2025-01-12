@@ -53,14 +53,20 @@ namespace mongo {
 namespace rpc {
 namespace {
 const auto auditUserAttrsDecoration =
-    OperationContext::declareDecoration<std::unique_ptr<AuditUserAttrs>>();
+    OperationContext::declareDecoration<synchronized_value<boost::optional<AuditUserAttrs>>>();
 }  // namespace
 
-AuditUserAttrs* AuditUserAttrs::get(OperationContext* opCtx) {
-    return auditUserAttrsDecoration(opCtx).get();
+boost::optional<AuditUserAttrs> AuditUserAttrs::get(OperationContext* opCtx) {
+    if (opCtx) {
+        auto auditUserAttrsOptional = auditUserAttrsDecoration(opCtx).synchronize();
+        if (auditUserAttrsOptional->has_value()) {
+            return auditUserAttrsOptional->value();
+        }
+    }
+    return boost::none;
 }
 
-void AuditUserAttrs::set(OperationContext* opCtx, std::unique_ptr<AuditUserAttrs> auditUserAttrs) {
+void AuditUserAttrs::set(OperationContext* opCtx, AuditUserAttrs auditUserAttrs) {
     auditUserAttrsDecoration(opCtx) = std::move(auditUserAttrs);
 }
 
@@ -68,35 +74,28 @@ boost::optional<ImpersonatedUserMetadata> getImpersonatedUserMetadata(OperationC
     if (!opCtx) {
         return boost::none;
     }
-    auto* auditUserAttrs = AuditUserAttrs::get(opCtx);
+    auto auditUserAttrs = AuditUserAttrs::get(opCtx);
     if (!auditUserAttrs) {
         return boost::none;
     }
-    auto userName = auditUserAttrs->userName;
-    auto roleNames = auditUserAttrs->roleNames;
-    if (!userName && roleNames.empty()) {
-        return boost::none;
-    }
     ImpersonatedUserMetadata metadata;
-    if (userName) {
-        metadata.setUser(userName.value());
-    }
-    metadata.setRoles(std::move(roleNames));
+    metadata.setUser(auditUserAttrs->userName);
+    metadata.setRoles(std::move(auditUserAttrs->roleNames));
     return metadata;
 }
 
 void setImpersonatedUserMetadata(OperationContext* opCtx,
                                  const boost::optional<ImpersonatedUserMetadata>& data) {
     if (!data) {
-        // Reset username / rolenames to boost::none / empty vector if data is absent.
-        AuditUserAttrs::set(opCtx,
-                            std::make_unique<AuditUserAttrs>(boost::none, std::vector<RoleName>()));
+        // Reset AuditUserAttrs decoration to boost::none if data is absent.
+        auditUserAttrsDecoration(opCtx) = boost::none;
         return;
     }
     auto userName = data->getUser();
     auto roleNames = data->getRoles();
-    AuditUserAttrs::set(
-        opCtx, std::make_unique<AuditUserAttrs>(std::move(userName), std::move(roleNames)));
+    if (userName) {
+        AuditUserAttrs::set(opCtx, AuditUserAttrs(*userName, std::move(roleNames)));
+    }
 }
 
 boost::optional<ImpersonatedUserMetadata> getAuthDataToImpersonatedUserMetadata(

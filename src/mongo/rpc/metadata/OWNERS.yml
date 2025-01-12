@@ -6,3 +6,6 @@ filters:
   - "impersonated_user_metadata.*":
     approvers:
       - 10gen/server-security
+  - "security_token*":
+    approvers:
+      - 10gen/server-security

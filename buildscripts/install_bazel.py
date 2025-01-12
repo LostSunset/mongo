@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import argparse
 import hashlib
 import os
@@ -5,9 +7,8 @@ import platform
 import shutil
 import stat
 import sys
+import time
 import urllib.request
-
-from retry import retry
 
 _S3_HASH_MAPPING = {
     "https://mdb-build-public.s3.amazonaws.com/bazel-binaries/bazel-7.2.1-ppc64le": "4ecc7f1396b8d921c6468b34cc8ed356c4f2dbe8a154c25d681a61ccb5dfc9cb",
@@ -20,9 +21,17 @@ _S3_HASH_MAPPING = {
 }
 
 
-@retry(tries=5, delay=3)
 def _download_path_with_retry(*args, **kwargs):
-    urllib.request.urlretrieve(*args, **kwargs)
+    for i in range(5):
+        try:
+            return urllib.request.urlretrieve(*args, **kwargs)
+        except Exception as e:
+            print(f"Download failed: {e}")
+            if i == 4:
+                raise
+            print("Retrying download...")
+            time.sleep(3)
+            continue
 
 
 def _sha256_file(filename: str) -> str:
@@ -143,22 +152,22 @@ def main():
             if sys.platform == "win32":
                 print("To add it to your PATH, run: \n")
                 print(
-                    f'[Environment]::SetEnvironmentVariable("Path", $env:Path + ";{abs_binary_directory}", "Machine")'
+                    f'[Environment]::SetEnvironmentVariable("Path", "{abs_binary_directory};" + $env:Path, "Machine")'
                 )
                 print("refreshenv")
             else:
                 print("To add it to your PATH, run: \n")
                 if os.path.exists(os.path.expanduser("~/.bashrc")):
-                    print(f'echo "export PATH=\\$PATH:{abs_binary_directory}" >> ~/.bashrc')
+                    print(f'echo "export PATH=\\{abs_binary_directory}:$PATH" >> ~/.bashrc')
                     print("source ~/.bashrc")
                 elif os.path.exists(os.path.expanduser("~/.bash_profile")):
-                    print(f'echo "export PATH=\\$PATH:{abs_binary_directory}" >> ~/.bash_profile')
+                    print(f'echo "export PATH=\\{abs_binary_directory}:$PATH" >> ~/.bash_profile')
                     print("source ~/.bash_profile")
                 elif os.path.exists(os.path.expanduser("~/.zshrc")):
-                    print(f'echo "export PATH=\\$PATH:{abs_binary_directory}" >> ~/.zshrc')
+                    print(f'echo "export PATH=\\{abs_binary_directory}:$PATH" >> ~/.zshrc')
                     print("source ~/.zshrc")
                 else:
-                    print(f"export PATH=$PATH:{abs_binary_directory}")
+                    print(f"export PATH={abs_binary_directory}:$PATH")
 
 
 if __name__ == "__main__":

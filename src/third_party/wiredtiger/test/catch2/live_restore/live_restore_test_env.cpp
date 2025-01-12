@@ -31,7 +31,8 @@ live_restore_test_env::live_restore_test_env()
      * them on close. Move these files to a temp location. We'll restore them in destructor before
      * _conn->close() is called.
      */
-    static std::string cfg_string = "live_restore=(enabled=true, path=" + DB_SOURCE + ")";
+    static std::string cfg_string =
+      "create=true,live_restore=(enabled=true, path=" + DB_SOURCE + ")";
     conn = std::make_unique<connection_wrapper>(DB_DEST.c_str(), cfg_string.c_str());
     testutil_copy(DB_DEST.c_str(), DB_TEMP_BACKUP.c_str());
     testutil_recreate_dir(DB_DEST.c_str());
@@ -58,6 +59,13 @@ std::string
 live_restore_test_env::source_file_path(const std::string &file_name)
 {
     return DB_SOURCE + "/" + file_name;
+}
+
+std::string
+live_restore_test_env::tombstone_file_path(const std::string &file_name)
+{
+    // Tombstone files only exist in the destination folder.
+    return DB_DEST + "/" + file_name + WT_LIVE_RESTORE_FS_TOMBSTONE_SUFFIX;
 }
 
 } // namespace utils.

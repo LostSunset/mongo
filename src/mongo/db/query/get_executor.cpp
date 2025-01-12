@@ -464,16 +464,22 @@ public:
             std::unique_ptr<ce::SamplingEstimator> samplingEstimator{nullptr};
             if (rankerMode == QueryPlanRankerModeEnum::kSamplingCE ||
                 rankerMode == QueryPlanRankerModeEnum::kAutomaticCE) {
+                auto samplingMode = _cq->getExpCtx()
+                                        ->getQueryKnobConfiguration()
+                                        .getInternalQuerySamplingCEMethod();
                 samplingEstimator = std::make_unique<ce::SamplingEstimatorImpl>(
                     _cq->getOpCtx(),
                     getCollections(),
-                    ce::SamplingEstimatorImpl::SamplingStyle::kRandom,
+                    samplingMode == SamplingCEMethodEnum::kRandom
+                        ? ce::SamplingEstimatorImpl::SamplingStyle::kRandom
+                        : ce::SamplingEstimatorImpl::SamplingStyle::kChunk,
                     CardinalityEstimate{
                         CardinalityType{
                             _plannerParams->mainCollectionInfo.collStats->getCardinality()},
                         EstimationSource::Metadata},
                     SamplingConfidenceIntervalEnum::k95,
-                    samplingMarginOfError.load());
+                    samplingMarginOfError.load(),
+                    internalQueryNumChunksForChunkBasedSampling.load());
             }
 
             auto statusWithCBRSolns = QueryPlanner::planWithCostBasedRanking(
@@ -1696,14 +1702,12 @@ StatusWith<std::unique_ptr<PlanExecutor, PlanExecutor::Deleter>> getExecutorUpda
                     LOGV2_DEBUG(20930, 2, "Using idhack", "query"_attr = redact(unparsedQuery));
                     UpdateStageParams updateStageParams(
                         request, driver, opDebug, std::move(documentCounter));
-
+                    BSONObj queryFilter = request->isUpsert()
+                        ? getQueryFilterMaybeUnwrapEq(unparsedQuery)
+                        : unparsedQuery;
                     fastPathQueryCounters.incrementIdHackQueryCounter();
-                    return InternalPlanner::updateWithIdHack(opCtx,
-                                                             coll,
-                                                             updateStageParams,
-                                                             idIndexDesc,
-                                                             unparsedQuery["_id"].wrap(),
-                                                             policy);
+                    return InternalPlanner::updateWithIdHack(
+                        opCtx, coll, updateStageParams, idIndexDesc, queryFilter, policy);
                 }
             }
         }

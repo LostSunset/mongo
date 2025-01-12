@@ -27,25 +27,15 @@
  *    it in the license file.
  */
 
-#include <boost/container/container_fwd.hpp>
-#include <fmt/format.h>
-// IWYU pragma: no_include "boost/container/detail/std_fwd.hpp"
-#include <boost/container/flat_set.hpp>
-#include <boost/container/small_vector.hpp>
-#include <boost/container/vector.hpp>
-#include <boost/cstdint.hpp>
-#include <boost/move/algo/move.hpp>
-#include <boost/move/utility_core.hpp>
-#include <boost/none.hpp>
-// IWYU pragma: no_include "boost/intrusive/detail/iterator.hpp"
-// IWYU pragma: no_include "boost/move/algo/detail/set_difference.hpp"
 #include <algorithm>
+#include <boost/container/container_fwd.hpp>
+#include <boost/cstdint.hpp>
+#include <boost/optional/optional.hpp>
+#include <fmt/format.h>
 #include <string>
 #include <tuple>
 #include <utility>
 #include <vector>
-
-#include <boost/optional/optional.hpp>
 
 #include "mongo/base/error_codes.h"
 #include "mongo/base/status.h"
@@ -73,27 +63,20 @@
 #include "mongo/db/operation_context.h"
 #include "mongo/db/service_context.h"
 #include "mongo/db/sorter/sorter.h"
-#include "mongo/db/sorter/sorter_gen.h"
 #include "mongo/db/storage/execution_context.h"
 #include "mongo/db/storage/index_entry_comparison.h"
-#include "mongo/db/storage/key_format.h"
 #include "mongo/db/storage/kv/kv_engine.h"
 #include "mongo/db/storage/recovery_unit.h"
 #include "mongo/db/storage/storage_engine.h"
 #include "mongo/db/storage/storage_options.h"
 #include "mongo/db/transaction_resources.h"
 #include "mongo/logv2/log.h"
-#include "mongo/logv2/log_attr.h"
-#include "mongo/logv2/log_component.h"
 #include "mongo/logv2/redaction.h"
-#include "mongo/platform/atomic_word.h"
-#include "mongo/platform/random.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/bufreader.h"
 #include "mongo/util/fail_point.h"
 #include "mongo/util/namespace_string_util.h"
 #include "mongo/util/stacktrace.h"
-#include "mongo/util/str.h"
 
 #define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kCommand
 
@@ -937,7 +920,7 @@ public:
 private:
     void _insertMultikeyMetadataKeysIntoSorter();
 
-    Sorter* _makeSorter(
+    std::unique_ptr<Sorter> _makeSorter(
         size_t maxMemoryUsageBytes,
         const DatabaseName& dbName,
         boost::optional<StringData> fileName = boost::none,
@@ -1101,7 +1084,7 @@ SortedDataIndexAccessMethod::BulkBuilderImpl::_makeSorterSettings() const {
         {});
 }
 
-SortedDataIndexAccessMethod::BulkBuilderImpl::Sorter*
+std::unique_ptr<SortedDataIndexAccessMethod::BulkBuilderImpl::Sorter>
 SortedDataIndexAccessMethod::BulkBuilderImpl::_makeSorter(
     size_t maxMemoryUsageBytes,
     const DatabaseName& dbName,
@@ -1122,7 +1105,7 @@ SortedDataIndexAccessMethod::BulkBuilderImpl::_makeSorter(
 std::unique_ptr<mongo::Sorter<key_string::Value, mongo::NullValue>::Iterator>
 SortedDataIndexAccessMethod::BulkBuilderImpl::finalizeSort() {
     _insertMultikeyMetadataKeysIntoSorter();
-    return std::unique_ptr<Sorter::Iterator>(_sorter->done());
+    return _sorter->done();
 }
 
 void SortedDataIndexAccessMethod::BulkBuilderImpl::debugEnsureSorted(const Sorter::Data& data) {
@@ -1384,23 +1367,6 @@ bool SortedDataIndexAccessMethod::shouldMarkIndexAsMultikey(
 void SortedDataIndexAccessMethod::validateDocument(const CollectionPtr& collection,
                                                    const BSONObj& obj,
                                                    const BSONObj& keyPattern) const {}
-
-/**
- * Generates a new file name on each call using a static, atomic and monotonically increasing
- * number. Each name is suffixed with a random number generated at startup, to prevent name
- * collisions when the index build external sort files are preserved across restarts.
- *
- * Each user of the Sorter must implement this function to ensure that all temporary files that the
- * Sorter instances produce are uniquely identified using a unique file name extension with separate
- * atomic variable. This is necessary because the sorter.cpp code is separately included in multiple
- * places, rather than compiled in one place and linked, and so cannot provide a globally unique ID.
- */
-std::string nextFileName() {
-    static AtomicWord<unsigned> indexAccessMethodFileCounter;
-    static const uint64_t randomSuffix = SecureRandom().nextUInt64();
-    return str::stream() << "extsort-index." << indexAccessMethodFileCounter.fetchAndAdd(1) << '-'
-                         << randomSuffix;
-}
 
 Status SortedDataIndexAccessMethod::_indexKeysOrWriteToSideTable(
     OperationContext* opCtx,

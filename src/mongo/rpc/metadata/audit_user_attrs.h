@@ -45,13 +45,13 @@ namespace mongo::rpc {
  */
 class AuditUserAttrs {
 public:
-    AuditUserAttrs(boost::optional<UserName> userName, std::vector<RoleName> roleNames)
+    AuditUserAttrs(UserName userName, std::vector<RoleName> roleNames)
         : userName(std::move(userName)), roleNames(std::move(roleNames)){};
 
-    static AuditUserAttrs* get(OperationContext* opCtx);
-    static void set(OperationContext* opCtx, std::unique_ptr<AuditUserAttrs> auditUserAttrs);
+    static boost::optional<AuditUserAttrs> get(OperationContext* opCtx);
+    static void set(OperationContext* opCtx, AuditUserAttrs auditUserAttrs);
 
-    boost::optional<UserName> userName;
+    UserName userName;
     std::vector<RoleName> roleNames;
 };
 
