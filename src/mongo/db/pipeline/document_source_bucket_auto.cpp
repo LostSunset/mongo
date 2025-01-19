@@ -62,6 +62,7 @@ REGISTER_DOCUMENT_SOURCE(bucketAuto,
                          LiteParsedDocumentSourceDefault::parse,
                          DocumentSourceBucketAuto::createFromBson,
                          AllowedWithApiStrict::kAlways);
+ALLOCATE_DOCUMENT_SOURCE_ID(bucketAuto, DocumentSourceBucketAuto::id)
 
 namespace {
 
@@ -167,14 +168,13 @@ DocumentSource::GetNextResult DocumentSourceBucketAuto::populateSorter() {
         _sorter = Sorter<Value, Document>::make(opts, comparator);
     }
 
-    long long position = 0;
     auto next = pSource->getNext();
     for (; next.isAdvanced(); next = pSource->getNext()) {
         auto nextDoc = next.releaseDocument();
         auto key = extractKey(nextDoc);
 
         auto doc = Document{{AccumulatorN::kFieldNameOutput, Value(std::move(nextDoc))},
-                            {AccumulatorN::kFieldNameGeneratedSortKey, Value(position++)}};
+                            {AccumulatorN::kFieldNameGeneratedSortKey, Value(_nDocPositions++)}};
         _sorter->add(std::move(key), std::move(doc));
         ++_nDocuments;
     }

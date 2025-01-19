@@ -114,6 +114,8 @@ public:
           _sortBy(std::move(sortBy)),
           _outputFields(std::move(outputFields)),
           _memoryTracker{expCtx->getAllowDiskUse(), maxMemoryBytes},
+          // TODO SERVER-98563 I think we can remove the sortBy here in favor of {$meta: "sortKey"}
+          // also.
           _iterator(expCtx.get(), pSource, &_memoryTracker, std::move(partitionBy), _sortBy),
           _sbeCompatibility(sbeCompatibility){};
 
@@ -142,8 +144,10 @@ public:
         return kStageName.rawData();
     };
 
-    DocumentSourceType getType() const override {
-        return DocumentSourceType::kInternalSetWindowFields;
+    static const Id& id;
+
+    Id getId() const override {
+        return id;
     }
 
     DepsTracker::State getDependencies(DepsTracker* deps) const final {

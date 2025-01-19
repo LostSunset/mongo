@@ -604,17 +604,7 @@ const char* ExpressionArrayToObject::getOpName() const {
 REGISTER_STABLE_EXPRESSION(bsonSize, ExpressionBsonSize::parse);
 
 Value ExpressionBsonSize::evaluate(const Document& root, Variables* variables) const {
-    Value arg = _children[0]->evaluate(root, variables);
-
-    if (arg.nullish())
-        return Value(BSONNULL);
-
-    uassert(31393,
-            str::stream() << "$bsonSize requires a document input, found: "
-                          << typeName(arg.getType()),
-            arg.getType() == BSONType::Object);
-
-    return Value(arg.getDocument().toBson().objsize());
+    return exec::expression::evaluate(*this, root, variables);
 }
 
 /* ------------------------- ExpressionCeil -------------------------- */
@@ -1593,11 +1583,7 @@ intrusive_ptr<Expression> ExpressionObject::optimize() {
 }
 
 Value ExpressionObject::evaluate(const Document& root, Variables* variables) const {
-    MutableDocument outputDoc;
-    for (auto&& pair : _expressions) {
-        outputDoc.addField(pair.first, pair.second->evaluate(root, variables));
-    }
-    return outputDoc.freezeToValue();
+    return exec::expression::evaluate(*this, root, variables);
 }
 
 bool ExpressionObject::selfAndChildrenAreConstant() const {
@@ -1747,63 +1733,8 @@ bool ExpressionFieldPath::representsPath(const std::string& dottedPath) const {
     return _fieldPath.tail().fullPath() == dottedPath;
 }
 
-Value ExpressionFieldPath::evaluatePathArray(size_t index, const Value& input) const {
-    dassert(input.isArray());
-
-    // Check for remaining path in each element of array
-    vector<Value> result;
-    const vector<Value>& array = input.getArray();
-    for (size_t i = 0; i < array.size(); i++) {
-        if (array[i].getType() != Object)
-            continue;
-
-        const Value nested = evaluatePath(index, array[i].getDocument());
-        if (!nested.missing())
-            result.push_back(nested);
-    }
-
-    return Value(std::move(result));
-}
-Value ExpressionFieldPath::evaluatePath(size_t index, const Document& input) const {
-    // Note this function is very hot so it is important that is is well optimized.
-    // In particular, all return paths should support RVO.
-
-    /* if we've hit the end of the path, stop */
-    if (index == _fieldPath.getPathLength() - 1)
-        return input[_fieldPath.getFieldNameHashed(index)];
-
-    // Try to dive deeper
-    const Value val = input[_fieldPath.getFieldNameHashed(index)];
-    switch (val.getType()) {
-        case Object:
-            return evaluatePath(index + 1, val.getDocument());
-
-        case Array:
-            return evaluatePathArray(index + 1, val);
-
-        default:
-            return Value();
-    }
-}
-
 Value ExpressionFieldPath::evaluate(const Document& root, Variables* variables) const {
-    if (_fieldPath.getPathLength() == 1)  // get the whole variable
-        return variables->getValue(_variable, root);
-
-    if (_variable == Variables::kRootId) {
-        // ROOT is always a document so use optimized code path
-        return evaluatePath(1, root);
-    }
-
-    Value var = variables->getValue(_variable, root);
-    switch (var.getType()) {
-        case Object:
-            return evaluatePath(1, var.getDocument());
-        case Array:
-            return evaluatePathArray(1, var);
-        default:
-            return Value();
-    }
+    return exec::expression::evaluate(*this, root, variables);
 }
 
 namespace {
@@ -2245,6 +2176,34 @@ Value ExpressionMeta::serialize(const SerializationOptions& options) const {
 
 Value ExpressionMeta::evaluate(const Document& root, Variables* variables) const {
     return exec::expression::evaluate(*this, root, variables);
+}
+
+/* ------------------------- ExpressionInternalRawSortKey ----------------------------- */
+
+REGISTER_EXPRESSION_CONDITIONALLY(
+    _internalSortKey,
+    ExpressionInternalRawSortKey::parse,
+    AllowedWithApiStrict::kInternal,
+    AllowedWithClientType::kInternal,
+    // No feature flag.
+    boost::none,
+    true);  // The 'condition' is always true - we just wanted to restrict to internal.
+
+intrusive_ptr<Expression> ExpressionInternalRawSortKey::parse(ExpressionContext* const expCtx,
+                                                              BSONElement expr,
+                                                              const VariablesParseState& vpsIn) {
+    uassert(9182101,
+            "No known arguments - must be an empty object",
+            expr.type() == BSONType::Object && expr.Obj().isEmpty());
+    return make_intrusive<ExpressionInternalRawSortKey>(expCtx);
+}
+
+Value ExpressionInternalRawSortKey::serialize(const SerializationOptions& options) const {
+    return Value(Document{{kName, Document{}}});
+}
+
+Value ExpressionInternalRawSortKey::evaluate(const Document& root, Variables* variables) const {
+    return root.metadata().getSortKey();
 }
 
 /* ----------------------- ExpressionMod ---------------------------- */
@@ -3154,17 +3113,7 @@ const char* ExpressionIsArray::getOpName() const {
 Value ExpressionInternalFindAllValuesAtPath::evaluate(const Document& root,
                                                       Variables* variables) const {
 
-    auto fieldPath = getFieldPath();
-    BSONElementSet elts(getExpressionContext()->getCollator());
-    auto bsonRoot = root.toBson();
-    dotted_path_support::extractAllElementsAlongPath(bsonRoot, fieldPath.fullPath(), elts);
-    std::vector<Value> outputVals;
-    for (BSONElementSet::iterator it = elts.begin(); it != elts.end(); ++it) {
-        BSONElement elt = *it;
-        outputVals.push_back(Value(elt));
-    }
-
-    return Value(std::move(outputVals));
+    return exec::expression::evaluate(*this, root, variables);
 }
 // This expression is not part of the stable API, but can always be used. It is
 // an internal expression used only for distinct.
@@ -4258,6 +4207,53 @@ Value ExpressionRandom::serialize(const SerializationOptions& options) const {
     return Value(DOC(getOpName() << Document()));
 }
 
+/* -------------------------- ExpressionCurrentDate ------------------------------ */
+REGISTER_EXPRESSION_WITH_FEATURE_FLAG(currentDate,
+                                      ExpressionCurrentDate::parse,
+                                      AllowedWithApiStrict::kNeverInVersion1,
+                                      AllowedWithClientType::kAny,
+                                      feature_flags::gFeatureFlagCurrentDate);
+
+ExpressionCurrentDate::ExpressionCurrentDate(ExpressionContext* const expCtx) : Expression(expCtx) {
+    expCtx->setSbeCompatibility(SbeCompatibility::notCompatible);
+}
+
+intrusive_ptr<Expression> ExpressionCurrentDate::parse(ExpressionContext* const expCtx,
+                                                       BSONElement exprElement,
+                                                       const VariablesParseState& vps) {
+    uassert(9428200,
+            "$currentDate not allowed inside collection validators",
+            !expCtx->getIsParsingCollectionValidator());
+
+    uassert(
+        9428201, "$currentDate does not currently accept arguments", exprElement.Obj().isEmpty());
+
+    return new ExpressionCurrentDate(expCtx);
+}
+
+const char* ExpressionCurrentDate::getOpName() const {
+    return "$currentDate";
+}
+
+MONGO_FAIL_POINT_DEFINE(sleepBeforeCurrentDateEvaluation);
+
+Value ExpressionCurrentDate::evaluate(const Document& root, Variables* variables) const {
+    if (MONGO_unlikely(sleepBeforeCurrentDateEvaluation.shouldFail())) {
+        sleepBeforeCurrentDateEvaluation.execute(
+            [&](const BSONObj& data) { sleepmillis(data["ms"].numberInt()); });
+    }
+
+    return Value(Date_t::now());
+}
+
+intrusive_ptr<Expression> ExpressionCurrentDate::optimize() {
+    return intrusive_ptr<Expression>(this);
+}
+
+Value ExpressionCurrentDate::serialize(const SerializationOptions& options) const {
+    return Value(DOC(getOpName() << Document()));
+}
+
 /* ------------------------- ExpressionToHashedIndexKey -------------------------- */
 REGISTER_STABLE_EXPRESSION(toHashedIndexKey, ExpressionToHashedIndexKey::parse);
 
@@ -4619,28 +4615,7 @@ intrusive_ptr<Expression> ExpressionGetField::parse(ExpressionContext* const exp
 }
 
 Value ExpressionGetField::evaluate(const Document& root, Variables* variables) const {
-    auto fieldValue = _children[_kField]->evaluate(root, variables);
-    // If '_children[_kField]' is a constant expression, the parser guarantees that it evaluates to
-    // a string. If it's a dynamic expression, its type can't be deduced during parsing.
-    uassert(3041704,
-            str::stream() << kExpressionName
-                          << " requires 'field' to evaluate to type String, "
-                             "but got "
-                          << typeName(fieldValue.getType()),
-            fieldValue.getType() == BSONType::String);
-
-    auto inputValue = _children[_kInput]->evaluate(root, variables);
-    if (inputValue.nullish()) {
-        if (inputValue.missing()) {
-            return Value();
-        } else {
-            return Value(BSONNULL);
-        }
-    } else if (inputValue.getType() != BSONType::Object) {
-        return Value();
-    }
-
-    return inputValue.getDocument().getField(fieldValue.getString());
+    return exec::expression::evaluate(*this, root, variables);
 }
 
 intrusive_ptr<Expression> ExpressionGetField::optimize() {
@@ -4726,21 +4701,7 @@ intrusive_ptr<Expression> ExpressionSetField::parse(ExpressionContext* const exp
 }
 
 Value ExpressionSetField::evaluate(const Document& root, Variables* variables) const {
-    auto input = _children[_kInput]->evaluate(root, variables);
-    if (input.nullish()) {
-        return Value(BSONNULL);
-    }
-
-    uassert(4161105,
-            str::stream() << kExpressionName << " requires 'input' to evaluate to type Object",
-            input.getType() == BSONType::Object);
-
-    auto value = _children[_kValue]->evaluate(root, variables);
-
-    // Build output document and modify 'field'.
-    MutableDocument outputDoc(input.getDocument());
-    outputDoc.setField(_fieldName, value);
-    return outputDoc.freezeToValue();
+    return exec::expression::evaluate(*this, root, variables);
 }
 
 intrusive_ptr<Expression> ExpressionSetField::optimize() {

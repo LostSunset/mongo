@@ -40,9 +40,9 @@
 #include "mongo/bson/bsontypes.h"
 #include "mongo/db/service_context_test_fixture.h"
 #include "mongo/db/storage/recovery_unit.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_event_handler.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 #include "mongo/logv2/log_component.h"
 #include "mongo/logv2/log_severity.h"
@@ -59,11 +59,11 @@
 namespace mongo {
 namespace {
 
-class WiredTigerConnection {
+class WiredTigerConnectionTest {
 public:
-    WiredTigerConnection(StringData dbpath,
-                         StringData extraStrings,
-                         WT_EVENT_HANDLER* eventHandler = nullptr)
+    WiredTigerConnectionTest(StringData dbpath,
+                             StringData extraStrings,
+                             WT_EVENT_HANDLER* eventHandler = nullptr)
         : _conn(nullptr) {
         std::stringstream ss;
         ss << "create,";
@@ -74,7 +74,7 @@ public:
         ASSERT_OK(wtRCToStatus(ret, nullptr));
         ASSERT(_conn);
     }
-    ~WiredTigerConnection() {
+    ~WiredTigerConnectionTest() {
         _conn->close(_conn, nullptr);
     }
     WT_CONNECTION* getConnection() const {
@@ -93,29 +93,29 @@ class WiredTigerUtilHarnessHelper {
 public:
     explicit WiredTigerUtilHarnessHelper(StringData extraStrings,
                                          WiredTigerEventHandler* eventHandler = nullptr)
-        : _connection(_dbpath.path(),
-                      extraStrings,
-                      eventHandler == nullptr ? nullptr : eventHandler->getWtEventHandler()),
-          _sessionCache(_connection.getConnection(), _connection.getClockSource()) {}
+        : _connectionTest(_dbpath.path(),
+                          extraStrings,
+                          eventHandler == nullptr ? nullptr : eventHandler->getWtEventHandler()),
+          _connection(_connectionTest.getConnection(), _connectionTest.getClockSource()) {}
 
-    WiredTigerSessionCache* getSessionCache() {
-        return &_sessionCache;
+    WiredTigerConnection* getConnection() {
+        return &_connection;
     }
 
     WiredTigerSession openSession() {
-        return WiredTigerSession(getSessionCache()->conn());
+        return WiredTigerSession(getConnection()->conn());
     }
 
 private:
     unittest::TempDir _dbpath{"wt_test"};
+    WiredTigerConnectionTest _connectionTest;
     WiredTigerConnection _connection;
-    WiredTigerSessionCache _sessionCache;
 };
 
 class WiredTigerUtilMetadataTest : public ServiceContextTest {
 protected:
     WiredTigerUtilMetadataTest() : _harnessHelper("") {
-        _ru = std::make_unique<WiredTigerRecoveryUnit>(_harnessHelper.getSessionCache(), nullptr);
+        _ru = std::make_unique<WiredTigerRecoveryUnit>(_harnessHelper.getConnection(), nullptr);
     }
 
     const char* getURI() const {
@@ -292,56 +292,48 @@ class WiredTigerUtilTest : public ServiceContextTest {};
 
 TEST_F(WiredTigerUtilTest, GetStatisticsValueMissingTable) {
     WiredTigerUtilHarnessHelper harnessHelper("statistics=(all)");
-    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getSessionCache(), nullptr);
+    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getConnection(), nullptr);
     WiredTigerSession* session = ru->getSession();
-    auto result = WiredTigerUtil::getStatisticsValue(session->getSession(),
-                                                     "statistics:table:no_such_table",
-                                                     "statistics=(fast)",
-                                                     WT_STAT_DSRC_BLOCK_SIZE);
+    auto result = WiredTigerUtil::getStatisticsValue(
+        *session, "statistics:table:no_such_table", "statistics=(fast)", WT_STAT_DSRC_BLOCK_SIZE);
     ASSERT_NOT_OK(result.getStatus());
     ASSERT_EQUALS(ErrorCodes::CursorNotFound, result.getStatus().code());
 }
 
 TEST_F(WiredTigerUtilTest, GetStatisticsValueStatisticsDisabled) {
     WiredTigerUtilHarnessHelper harnessHelper("statistics=(none)");
-    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getSessionCache(), nullptr);
+    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getConnection(), nullptr);
     WiredTigerSession* session = ru->getSession();
     WT_SESSION* wtSession = session->getSession();
     ASSERT_OK(wtRCToStatus(wtSession->create(wtSession, "table:mytable", nullptr), wtSession));
-    auto result = WiredTigerUtil::getStatisticsValue(session->getSession(),
-                                                     "statistics:table:mytable",
-                                                     "statistics=(fast)",
-                                                     WT_STAT_DSRC_BLOCK_SIZE);
+    auto result = WiredTigerUtil::getStatisticsValue(
+        *session, "statistics:table:mytable", "statistics=(fast)", WT_STAT_DSRC_BLOCK_SIZE);
     ASSERT_NOT_OK(result.getStatus());
     ASSERT_EQUALS(ErrorCodes::CursorNotFound, result.getStatus().code());
 }
 
 TEST_F(WiredTigerUtilTest, GetStatisticsValueInvalidKey) {
     WiredTigerUtilHarnessHelper harnessHelper("statistics=(all)");
-    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getSessionCache(), nullptr);
+    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getConnection(), nullptr);
     WiredTigerSession* session = ru->getSession();
     WT_SESSION* wtSession = session->getSession();
     ASSERT_OK(wtRCToStatus(wtSession->create(wtSession, "table:mytable", nullptr), wtSession));
     // Use connection statistics key which does not apply to a table.
-    auto result = WiredTigerUtil::getStatisticsValue(session->getSession(),
-                                                     "statistics:table:mytable",
-                                                     "statistics=(fast)",
-                                                     WT_STAT_CONN_SESSION_OPEN);
+    auto result = WiredTigerUtil::getStatisticsValue(
+        *session, "statistics:table:mytable", "statistics=(fast)", WT_STAT_CONN_SESSION_OPEN);
     ASSERT_NOT_OK(result.getStatus());
     ASSERT_EQUALS(ErrorCodes::NoSuchKey, result.getStatus().code());
 }
 
 TEST_F(WiredTigerUtilTest, GetStatisticsValueValidKey) {
     WiredTigerUtilHarnessHelper harnessHelper("statistics=(all)");
-    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getSessionCache(), nullptr);
+    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getConnection(), nullptr);
     WiredTigerSession* session = ru->getSession();
     WT_SESSION* wtSession = session->getSession();
     ASSERT_OK(wtRCToStatus(wtSession->create(wtSession, "table:mytable", nullptr), wtSession));
     // Use connection statistics key which does not apply to a table.
-    auto result = WiredTigerUtil::getStatisticsValue(session->getSession(),
-                                                     "statistics:table:mytable",
-                                                     "statistics=(fast)",
-                                                     WT_STAT_DSRC_BTREE_ENTRIES);
+    auto result = WiredTigerUtil::getStatisticsValue(
+        *session, "statistics:table:mytable", "statistics=(fast)", WT_STAT_DSRC_BTREE_ENTRIES);
     ASSERT_OK(result.getStatus());
     // Expect statistics value to be zero as there are no entries in the Btree.
     ASSERT_EQUALS(0U, result.getValue());
@@ -359,7 +351,7 @@ TEST_F(WiredTigerUtilTest, ParseAPIMessages) {
     WiredTigerUtilHarnessHelper harnessHelper(connection_cfg.c_str(), &eventHandler);
 
     // Create a session.
-    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getSessionCache(), nullptr);
+    auto ru = std::make_unique<WiredTigerRecoveryUnit>(harnessHelper.getConnection(), nullptr);
     WiredTigerSession* session = ru->getSession();
     WT_SESSION* wtSession = session->getSession();
 
@@ -398,7 +390,7 @@ TEST_F(WiredTigerUtilTest, ParseCompactMessages) {
     const std::string uri = "table:ev_compact";
     startCapturingLogMessages();
     ASSERT_OK(wtRCToStatus(wtSession->create(*wtSession, uri.c_str(), nullptr), *wtSession));
-    ASSERT_OK(wtRCToStatus(wtSession->compact(*wtSession, uri.c_str(), nullptr), *wtSession));
+    ASSERT_OK(wtRCToStatus(wtSession.compact(uri.c_str(), nullptr), wtSession));
     stopCapturingLogMessages();
 
     // Verify there is at least one message from WiredTiger and their content.

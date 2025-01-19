@@ -35,12 +35,13 @@
 #include <wiredtiger.h>
 
 #include "mongo/db/storage/wiredtiger/wiredtiger_compiled_configuration.h"
+#include "mongo/stdx/mutex.h"
 #include "mongo/stdx/unordered_set.h"
 #include "mongo/util/time_support.h"
 
 namespace mongo {
 
-class WiredTigerSessionCache;
+class WiredTigerConnection;
 
 /**
  * This is a structure that caches 1 cursor for each uri.
@@ -60,10 +61,10 @@ public:
      * Creates a new WT session on the specified connection.
      *
      * @param conn WT connection
-     * @param cache The WiredTigerSessionCache that owns this session.
+     * @param connection The WiredTigerConnection that owns this session.
      * @param epoch In which session cache cleanup epoch was this session instantiated.
      */
-    WiredTigerSession(WT_CONNECTION* conn, WiredTigerSessionCache* cache, uint64_t epoch = 0);
+    WiredTigerSession(WT_CONNECTION* conn, WiredTigerConnection* connection, uint64_t epoch = 0);
 
     /**
      * Creates a new WT session on the specified connection.
@@ -76,6 +77,8 @@ public:
 
     ~WiredTigerSession();
 
+    // TODO(SERVER-98126): Remove these 3 ways of directly-accessing the session.
+
     WT_SESSION* getSession() const {
         return _session;
     }
@@ -85,6 +88,25 @@ public:
     WT_SESSION* operator->() const {
         return _session;
     }
+
+    // Safe accessor for the internal session
+    template <typename Functor>
+    auto with(Functor functor) {
+        stdx::lock_guard<stdx::mutex> lock(_sessionGuard);
+        return functor(_session);
+    }
+
+#define WRAPPED_WT_SESSION_METHOD(name)                               \
+    template <typename... Args>                                       \
+    auto name(Args&&... args) {                                       \
+        stdx::lock_guard<stdx::mutex> lock(_sessionGuard);            \
+        return _session->name(_session, std::forward<Args>(args)...); \
+    }
+
+    WRAPPED_WT_SESSION_METHOD(compact)
+    WRAPPED_WT_SESSION_METHOD(get_rollback_reason)
+    WRAPPED_WT_SESSION_METHOD(reconfigure)
+#undef WRAPPED_WT_SESSION_METHOD
 
     /**
      * Gets a cursor on the table id 'id' with optional configuration, 'config'.
@@ -161,9 +183,10 @@ public:
     }
 
     /**
-     * Reconfigures the session. Stores the config string that undoes this change.
+     * Reconfigures the session. Stores the config string that undoes this change when
+     * resetSessionConfiguration() is called.
      */
-    void reconfigure(const std::string& newConfig, std::string undoConfig);
+    void modifyConfiguration(const std::string& newConfig, std::string undoConfig);
 
     /**
      * Reset the configurations for this session to the default. This should be done before we
@@ -196,23 +219,27 @@ private:
         std::string _config;  // Cursor config. Do not serve cursors with different configurations
     };
 
-    friend class WiredTigerSessionCache;
+    friend class WiredTigerConnection;
 
     // The cursor cache is a list of pairs that contain an ID and cursor
     typedef std::list<CachedCursor> CursorCache;
 
-    // Used internally by WiredTigerSessionCache
+    // Used internally by WiredTigerConnection
     uint64_t _getEpoch() const {
         return _epoch;
     }
 
     const uint64_t _epoch;
+
+    // This protects against concurrent calls into the WiredTiger API through this session (i.e. it
+    // must be locked for uses of the session, or any cursor created from it).
+    stdx::mutex _sessionGuard;
     WT_SESSION* _session;  // owned
     CursorCache _cursors;  // owned
     uint64_t _cursorGen;
     int _cursorsOut;
 
-    WiredTigerSessionCache* _cache;                  // not owned
+    WiredTigerConnection* _conn;                     // not owned
     CompiledConfigurationsPerConnection* _compiled;  // not owned
 
     Date_t _idleExpireTime;

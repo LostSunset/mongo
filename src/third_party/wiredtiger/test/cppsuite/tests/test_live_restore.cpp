@@ -312,16 +312,12 @@ run_restore(const std::string &home, const std::string &source, const int64_t th
   const int64_t verbose_level, const bool first)
 {
     /* Create a connection, set the cache size and specify the home directory. */
-    const std::string verbose_string =
-      verbose_level == 0 ? "" : "verbose=[fileops:" + std::to_string(verbose_level) + "]";
-    /*
-     * FIXME-WT-13888 - The "fill_holes_on_close" configuration can be removed once proper work
-     * queuing is implemented. The current implementation skips the turtle and metadata file which
-     * breaks things.
-     */
+    const std::string verbose_string = verbose_level == 0 ?
+      "" :
+      "verbose=[live_restore_progress,live_restore:" + std::to_string(verbose_level) + "]";
     const std::string conn_config = CONNECTION_CREATE +
-      ",live_restore=(enabled=true,debug=(fill_holes_on_close=true),threads_max=" +
-      std::to_string(thread_count) + ",path=\"" + source + "\"),cache_size=5GB," + verbose_string +
+      ",live_restore=(enabled=true,threads_max=" + std::to_string(thread_count) + ",path=\"" +
+      source + "\"),cache_size=5GB," + verbose_string +
       ",statistics=(all),statistics_log=(json,on_close,wait=1)";
 
     /* Create connection. */

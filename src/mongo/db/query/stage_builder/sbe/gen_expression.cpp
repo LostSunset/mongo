@@ -326,6 +326,7 @@ public:
     void visit(const ExpressionLog10* expr) final {}
     void visit(const ExpressionInternalFLEBetween* expr) final {}
     void visit(const ExpressionInternalFLEEqual* expr) final {}
+    void visit(const ExpressionInternalRawSortKey* expr) final {}
     void visit(const ExpressionMap* expr) final {}
     void visit(const ExpressionMeta* expr) final {}
     void visit(const ExpressionMod* expr) final {}
@@ -419,6 +420,7 @@ public:
     void visit(const ExpressionInternalFindElemMatch* expr) final {}
     void visit(const ExpressionFunction* expr) final {}
     void visit(const ExpressionRandom* expr) final {}
+    void visit(const ExpressionCurrentDate* expr) final {}
     void visit(const ExpressionToHashedIndexKey* expr) final {}
     void visit(const ExpressionDateAdd* expr) final {}
     void visit(const ExpressionDateSubtract* expr) final {}
@@ -503,6 +505,7 @@ public:
     void visit(const ExpressionLog10* expr) final {}
     void visit(const ExpressionInternalFLEBetween* expr) final {}
     void visit(const ExpressionInternalFLEEqual* expr) final {}
+    void visit(const ExpressionInternalRawSortKey* expr) final {}
     void visit(const ExpressionMap* expr) final {}
     void visit(const ExpressionMeta* expr) final {}
     void visit(const ExpressionMod* expr) final {}
@@ -596,6 +599,7 @@ public:
     void visit(const ExpressionInternalFindElemMatch* expr) final {}
     void visit(const ExpressionFunction* expr) final {}
     void visit(const ExpressionRandom* expr) final {}
+    void visit(const ExpressionCurrentDate* expr) final {}
     void visit(const ExpressionToHashedIndexKey* expr) final {}
     void visit(const ExpressionDateAdd* expr) final {}
     void visit(const ExpressionDateSubtract* expr) final {}
@@ -2375,6 +2379,9 @@ public:
     void visit(const ExpressionInternalFLEEqual* expr) final {
         unsupportedExpression("$_internalFleEq");
     }
+    void visit(const ExpressionInternalRawSortKey* expr) final {
+        unsupportedExpression(ExpressionInternalRawSortKey::kName.rawData());
+    }
     void visit(const ExpressionMap* expr) final {
         unsupportedExpression("$map");
     }
@@ -3565,6 +3572,11 @@ public:
             5155201, "$rand does not currently accept arguments", expr->getChildren().size() == 0);
         auto expression = makeABTFunction("rand");
         pushABT(std::move(expression));
+    }
+
+    void visit(const ExpressionCurrentDate* expr) final {
+        // TODO(SERVER-99405): Support $currentDate in SBE.
+        unsupportedExpression("$currentDate");
     }
 
     void visit(const ExpressionToHashedIndexKey* expr) final {

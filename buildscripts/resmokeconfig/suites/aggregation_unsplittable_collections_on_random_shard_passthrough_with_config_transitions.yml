@@ -92,6 +92,8 @@ selector:
     - jstests/aggregation/bugs/substr.js
     - jstests/aggregation/sources/setWindowFields/set_union.js
     - jstests/aggregation/accumulators/set_union.js
+    - jstests/aggregation/sources/graphLookup/spilling.js
+    - jstests/aggregation/expressions/current_date.js
 
     # These tests run larger aggregations that can take a long time and can repeatedly get interrupted by config transitions.
     - jstests/aggregation/query_limits_test.js
@@ -112,6 +114,7 @@ selector:
     # Currently this passthrough enables the balancer to allow the config transition to successfully complete.
     - assumes_balancer_off
     - assumes_no_track_upon_creation
+    - assumes_stable_shard_list
 
 executor:
   archive:

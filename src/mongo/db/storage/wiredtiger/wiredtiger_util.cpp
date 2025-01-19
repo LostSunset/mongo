@@ -113,11 +113,12 @@ void WiredTigerUtil::fetchTypeAndSourceURI(WiredTigerRecoveryUnit& ru,
     *source = std::string(sourceItem.str, sourceItem.len);
 }
 
-StatusWith<std::string> WiredTigerUtil::getMetadataCreate(WT_SESSION* session, StringData uri) {
+StatusWith<std::string> WiredTigerUtil::getMetadataCreate(WiredTigerSession& session,
+                                                          StringData uri) {
     WT_CURSOR* cursor;
-    invariantWTOK(session->open_cursor(session, "metadata:create", nullptr, "", &cursor), session);
+    invariantWTOK(session->open_cursor(*session, "metadata:create", nullptr, "", &cursor), session);
     invariant(cursor);
-    ON_BLOCK_EXIT([cursor, session] { invariantWTOK(cursor->close(cursor), session); });
+    ON_BLOCK_EXIT([cursor, &session] { invariantWTOK(cursor->close(cursor), session); });
 
     return _getMetadata(cursor, uri);
 }
@@ -339,10 +340,19 @@ Status WiredTigerUtil::checkTableCreationOptions(const BSONElement& configElem) 
 }
 
 // static
-StatusWith<int64_t> WiredTigerUtil::getStatisticsValue(WT_SESSION* session,
+StatusWith<int64_t> WiredTigerUtil::getStatisticsValue(WiredTigerSession& session,
                                                        const std::string& uri,
                                                        const std::string& config,
                                                        int statisticsKey) {
+    return session.with(
+        [&](WT_SESSION* s) { return getStatisticsValue_DoNotUse(s, uri, config, statisticsKey); });
+}
+
+// static
+StatusWith<int64_t> WiredTigerUtil::getStatisticsValue_DoNotUse(WT_SESSION* session,
+                                                                const std::string& uri,
+                                                                const std::string& config,
+                                                                int statisticsKey) {
     invariant(session);
     WT_CURSOR* cursor = nullptr;
     const char* cursorConfig = config.empty() ? nullptr : config.c_str();
@@ -379,7 +389,7 @@ StatusWith<int64_t> WiredTigerUtil::getStatisticsValue(WT_SESSION* session,
     return StatusWith<int64_t>(value);
 }
 
-int64_t WiredTigerUtil::getIdentSize(WT_SESSION* s, const std::string& uri) {
+int64_t WiredTigerUtil::getIdentSize(WiredTigerSession& s, const std::string& uri) {
     StatusWith<int64_t> result = WiredTigerUtil::getStatisticsValue(
         s, "statistics:" + uri, "statistics=(size)", WT_STAT_DSRC_BLOCK_SIZE);
     const Status& status = result.getStatus();
@@ -393,7 +403,7 @@ int64_t WiredTigerUtil::getIdentSize(WT_SESSION* s, const std::string& uri) {
     return result.getValue();
 }
 
-int64_t WiredTigerUtil::getEphemeralIdentSize(WT_SESSION* s, const std::string& uri) {
+int64_t WiredTigerUtil::getEphemeralIdentSize(WiredTigerSession& s, const std::string& uri) {
     // For ephemeral case, use cursor statistics
     const auto statsUri = "statistics:" + uri;
 
@@ -424,14 +434,14 @@ int64_t WiredTigerUtil::getEphemeralIdentSize(WT_SESSION* s, const std::string& 
     return numEntries * bytesPerEntry;
 }
 
-int64_t WiredTigerUtil::getIdentReuseSize(WT_SESSION* s, const std::string& uri) {
+int64_t WiredTigerUtil::getIdentReuseSize(WiredTigerSession& s, const std::string& uri) {
     auto result = WiredTigerUtil::getStatisticsValue(
         s, "statistics:" + uri, "statistics=(fast)", WT_STAT_DSRC_BLOCK_REUSE_BYTES);
     uassertStatusOK(result.getStatus());
     return result.getValue();
 }
 
-int64_t WiredTigerUtil::getIdentCompactRewrittenExpectedSize(WT_SESSION* s,
+int64_t WiredTigerUtil::getIdentCompactRewrittenExpectedSize(WiredTigerSession& s,
                                                              const std::string& uri) {
     auto result =
         WiredTigerUtil::getStatisticsValue(s,
@@ -750,17 +760,17 @@ int WiredTigerUtil::verifyTable(WiredTigerRecoveryUnit& ru,
 
     // Try to close as much as possible to avoid EBUSY errors.
     ru.getSession()->closeAllCursors(uri);
-    WiredTigerSessionCache* sessionCache = ru.getSessionCache();
-    sessionCache->closeAllCursors(uri);
+    WiredTigerConnection* connection = ru.getConnection();
+    connection->closeAllCursors(uri);
 
     // Open a new session with custom error handlers.
     const char* sessionConfig = nullptr;
     if (gFeatureFlagPrefetch.isEnabled(
             serverGlobalParams.featureCompatibility.acquireFCVSnapshot()) &&
-        !sessionCache->isEphemeral()) {
+        !connection->isEphemeral()) {
         sessionConfig = "prefetch=(enabled=true)";
     }
-    WT_CONNECTION* conn = ru.getSessionCache()->conn();
+    WT_CONNECTION* conn = ru.getConnection()->conn();
     WiredTigerSession session(conn, &eventHandler, sessionConfig);
 
     const char* verifyConfig =
@@ -860,8 +870,8 @@ Status WiredTigerUtil::setTableLogging(WiredTigerRecoveryUnit& ru,
 
     // Try to close as much as possible to avoid EBUSY errors.
     ru.getSession()->closeAllCursors(uri);
-    WiredTigerSessionCache* sessionCache = ru.getSessionCache();
-    sessionCache->closeAllCursors(uri);
+    WiredTigerConnection* connection = ru.getConnection();
+    connection->closeAllCursors(uri);
 
     // This method uses the WiredTiger config parser to see if the table is in the expected logging
     // state. Only attempt to alter the table when a change is needed. This avoids grabbing heavy
@@ -872,8 +882,8 @@ Status WiredTigerUtil::setTableLogging(WiredTigerRecoveryUnit& ru,
     // succeed.
     std::string existingMetadata;
     {
-        auto session = sessionCache->getSession();
-        existingMetadata = getMetadataCreate(session->getSession(), uri).getValue();
+        auto session = connection->getSession();
+        existingMetadata = getMetadataCreate(*session, uri).getValue();
     }
 
     {
@@ -895,10 +905,10 @@ Status WiredTigerUtil::setTableLogging(WiredTigerRecoveryUnit& ru,
         22432, 1, "Changing table logging settings", "uri"_attr = uri, "loggingEnabled"_attr = on);
     // Only alter the metadata once we're sure that we need to change the table settings, since
     // WT_SESSION::alter may return EBUSY and require taking a checkpoint to make progress.
-    auto status = sessionCache->getKVEngine()->alterMetadata(uri, setting);
+    auto status = connection->getKVEngine()->alterMetadata(uri, setting);
     if (!status.isOK()) {
         // Dump the storage engine's internal state to assist in diagnosis.
-        sessionCache->getKVEngine()->dump();
+        connection->getKVEngine()->dump();
 
         LOGV2_FATAL(50756,
                     "Failed to update log setting",
@@ -918,7 +928,7 @@ bool WiredTigerUtil::collectConnectionStatistics(WiredTigerKVEngine* engine, BSO
         return false;
     }
 
-    // Bypass the WiredTigerSessionCache to obtain a session that can be used after it shuts down,
+    // Bypass the WiredTigerConnection to obtain a session that can be used after it shuts down,
     // potentially before the storage engine itself shuts down.
     WiredTigerSession session(permit->conn());
 

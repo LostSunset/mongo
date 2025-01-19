@@ -34,16 +34,18 @@
 #include "mongo/db/query/index_bounds_builder.h"
 #include "mongo/db/query/stage_types.h"
 
+#define MONGO_LOGV2_DEFAULT_COMPONENT ::mongo::logv2::LogComponent::kQueryCE
+
 namespace mongo::cost_based_ranker {
 
-CardinalityEstimator::CardinalityEstimator(const stats::CollectionStatistics& collStats,
+CardinalityEstimator::CardinalityEstimator(const CollectionInfo& collInfo,
                                            const ce::SamplingEstimator* samplingEstimator,
                                            EstimateMap& qsnEstimates,
                                            QueryPlanRankerModeEnum rankerMode)
-    : _collCard{CardinalityEstimate{CardinalityType{collStats.getCardinality()},
+    : _collCard{CardinalityEstimate{CardinalityType{collInfo.collStats->getCardinality()},
                                     EstimationSource::Metadata}},
       _inputCard{_collCard},
-      _collStats(collStats),
+      _collInfo(collInfo),
       _samplingEstimator(samplingEstimator),
       _qsnEstimates{qsnEstimates},
       _rankerMode(rankerMode) {
@@ -52,6 +54,17 @@ CardinalityEstimator::CardinalityEstimator(const stats::CollectionStatistics& co
         tassert(9746501,
                 "samplingEstimator cannot be null when ranker mode is samplingCE or automaticCE",
                 _samplingEstimator != nullptr);
+    }
+    for (auto&& indexEntry : _collInfo.indexes) {
+        if (!indexEntry.multikey) {
+            continue;
+        }
+        for (auto&& indexedPath : indexEntry.keyPattern) {
+            auto path = indexedPath.fieldNameStringData();
+            if (indexEntry.pathHasMultikeyComponent(path)) {
+                _multikeyPaths.insert(path);
+            }
+        }
     }
 }
 
@@ -153,7 +166,6 @@ CEResult CardinalityEstimator::estimate(const QuerySolutionNode* node) {
                 _conjSels.empty());
         _inputCard = ceRes.getValue();
     }
-
     return ceRes;
 }
 
@@ -189,6 +201,9 @@ CEResult CardinalityEstimator::estimate(const MatchExpression* node, const bool 
             break;
         case MatchExpression::OR:
             ceRes = estimate(static_cast<const OrMatchExpression*>(node), isFilterRoot);
+            break;
+        case MatchExpression::NOR:
+            ceRes = estimate(static_cast<const NorMatchExpression*>(node), isFilterRoot);
             break;
         default:
             if (node->numChildren() == 0) {
@@ -397,9 +412,16 @@ CEResult CardinalityEstimator::indexUnionCard(const T* node) {
 // histogram estimation for the resulting OIL.
 CEResult CardinalityEstimator::estimateConjWithHistogram(
     StringData path, const std::vector<const MatchExpression*>& nodes) {
-    // Note: We are assuming that the field is non-multikey when building this interval.
-    // TODO SERVER-98374: Once CBR has catalog information, bail out of histogram estimation here if
-    // 'path' is multikey.
+    // Bail out of using a histogram for estimation if 'path' is multikey.
+    if (_multikeyPaths.contains(path) && nodes.size() > 1) {
+        return Status(ErrorCodes::HistogramCEFailure,
+                      str::stream{}
+                          << "cannot use histogram to estimate conjunction on multikey path: "
+                          << path);
+    }
+
+    // At this point, we know that 'path' is non-multikey, so we can safely build an interval for
+    // each conjunct and intersect them.
     IndexEntry fakeIndex(BSON(path << "1") /* keyPattern */,
                          INDEX_BTREE,
                          IndexDescriptor::IndexVersion::kV2,
@@ -560,9 +582,8 @@ CEResult CardinalityEstimator::estimate(const AndMatchExpression* node) {
     // TODO: Suppose we have an AND with some predicates on 'a' that can answered with a
     // histogram and some predicates on 'b' that can't. Should we still try to use histogram for
     // 'a'? The code as written will not.
-    if (_rankerMode == QueryPlanRankerModeEnum::kHistogramCE) {
-        return tryHistogramAnd(node);
-    } else if (_rankerMode == QueryPlanRankerModeEnum::kAutomaticCE) {
+    if (_rankerMode == QueryPlanRankerModeEnum::kHistogramCE ||
+        _rankerMode == QueryPlanRankerModeEnum::kAutomaticCE) {
         auto ceRes = tryHistogramAnd(node);
         if (ceRes.isOK()) {
             return ceRes.getValue();
@@ -589,23 +610,47 @@ CEResult CardinalityEstimator::estimate(const AndMatchExpression* node) {
     return conjCard(selOffset, _inputCard);
 }
 
-CEResult CardinalityEstimator::estimate(const OrMatchExpression* node, bool isFilterRoot) {
-    tassert(9586706, "OrMatchExpression must have children.", node->numChildren() > 0);
+CEResult CardinalityEstimator::estimateDisjunction(
+    const std::vector<std::unique_ptr<MatchExpression>>& disjuncts) {
     std::vector<SelectivityEstimate> disjSels;
     size_t selOffset = _conjSels.size();
-    for (size_t i = 0; i < node->numChildren(); i++) {
-        auto ceRes = estimate(node->getChild(i), false);
+    for (auto&& node : disjuncts) {
+        auto ceRes = estimate(node.get(), false);
         if (!ceRes.isOK()) {
             return ceRes;
         }
         trimSels(selOffset);
         disjSels.emplace_back(ceRes.getValue() / _inputCard);
     }
-    CEResult disjRes{disjCard(_inputCard, disjSels)};
+    return disjCard(_inputCard, disjSels);
+}
+
+CEResult CardinalityEstimator::estimate(const OrMatchExpression* node, bool isFilterRoot) {
+    tassert(9586706, "OrMatchExpression must have children.", node->numChildren() > 0);
+    CEResult disjRes = estimateDisjunction(node->getChildVector());
+    if (!disjRes.isOK()) {
+        return disjRes;
+    }
     if (isFilterRoot) {
         addRootNodeSel(disjRes);
     }
     return disjRes;
+}
+
+CEResult CardinalityEstimator::estimate(const NorMatchExpression* node, bool isFilterRoot) {
+    tassert(9903001, "NorMatchExpression must have children.", node->numChildren() > 0);
+    // Estimate $nor as a logical negation of OR. First we estimate the selectivity of the children
+    // of 'node' as if they were a $or. Then we negate it to get the resuling selectivity of $nor.
+    CEResult disjRes = estimateDisjunction(node->getChildVector());
+    if (!disjRes.isOK()) {
+        return disjRes;
+    }
+    SelectivityEstimate disjSel = disjRes.getValue() / _inputCard;
+    CEResult res = _inputCard * disjSel.negate();
+    if (isFilterRoot) {
+        addRootNodeSel(res);
+    }
+    return res;
 }
 
 /*
@@ -701,7 +746,7 @@ CEResult CardinalityEstimator::estimate(const OrderedIntervalList* node, bool fo
 
     if (_rankerMode == QueryPlanRankerModeEnum::kHistogramCE ||
         _rankerMode == QueryPlanRankerModeEnum::kAutomaticCE || forceHistogram) {
-        histogram = _collStats.getHistogram(node->name);
+        histogram = _collInfo.collStats->getHistogram(node->name);
         if (!histogram) {
             if (strict) {
                 return CEResult(ErrorCodes::HistogramCEFailure,

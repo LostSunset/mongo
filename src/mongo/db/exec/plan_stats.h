@@ -72,6 +72,13 @@ struct SpecificStats {
 
     virtual void acceptVisitor(PlanStatsConstVisitor* visitor) const = 0;
     virtual void acceptVisitor(PlanStatsMutableVisitor* visitor) = 0;
+
+    /**
+     * Subclasses that have the ability to fetch should override this to return 'true'.
+     */
+    virtual bool doesFetch() const {
+        return false;
+    }
 };
 
 // Every stage has CommonStats.
@@ -476,11 +483,18 @@ struct DistinctScanStats : public SpecificStats {
         visitor->visit(this);
     }
 
+    bool doesFetch() const final {
+        return isFetching;
+    }
+
     // How many keys did we look at while distinct-ing?
     size_t keysExamined = 0;
     // The total number of full documents touched by the embedded fetch stage, if one exists.
     size_t docsExamined = 0;
-    // How many chunk skips were performed while distinct-ing?
+    // Tracks how many times we skipped past orphan chunks.
+    size_t orphanChunkSkips = 0;
+    // Tracks the number of time we filtered out an orphan document (symmetric to
+    // 'ShardingFilterStats').
     size_t chunkSkips = 0;
 
     BSONObj keyPattern;
@@ -529,6 +543,10 @@ struct FetchStats : public SpecificStats {
 
     void acceptVisitor(PlanStatsMutableVisitor* visitor) final {
         visitor->visit(this);
+    }
+
+    bool doesFetch() const final {
+        return true;
     }
 
     // Have we seen anything that already had an object?
@@ -1357,4 +1375,38 @@ struct DocumentSourceIdLookupStats : public SpecificStats {
     // Tracks the cumulative summary stats for the idLookup sub-pipeline.
     PlanSummaryStats planSummaryStats;
 };
+
+struct DocumentSourceGraphLookupStats : public SpecificStats {
+    std::unique_ptr<SpecificStats> clone() const override {
+        return std::make_unique<DocumentSourceGraphLookupStats>(*this);
+    }
+
+    uint64_t estimateObjectSizeInBytes() const override {
+        return sizeof(*this) +
+            (planSummaryStats.estimateObjectSizeInBytes() - sizeof(planSummaryStats));
+    }
+
+    void acceptVisitor(PlanStatsConstVisitor* visitor) const final {
+        visitor->visit(this);
+    }
+
+    void acceptVisitor(PlanStatsMutableVisitor* visitor) final {
+        visitor->visit(this);
+    }
+
+    // The peak amount of RAM used by the stage during execution.
+    uint64_t maxMemoryUsageBytes = 0;
+    // The number of times the stage spilled.
+    uint64_t spills = 0;
+    // The size, in bytes, of the memory released with spilling.
+    uint64_t spilledBytes = 0;
+    // The size, in bytes, of disk space used for spilling.
+    uint64_t spilledDataStorageSize = 0;
+    // The total number of records spillied.
+    uint64_t spilledRecords = 0;
+
+    // Tracks the summary stats in aggregate across all executions of the subpipeline.
+    PlanSummaryStats planSummaryStats;
+};
+
 }  // namespace mongo

@@ -50,8 +50,8 @@
 #include "mongo/db/storage/key_format.h"
 #include "mongo/db/storage/key_string/key_string.h"
 #include "mongo/db/storage/sorted_data_interface.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 #include "mongo/util/assert_util.h"
 #include "mongo/util/uuid.h"
@@ -292,10 +292,6 @@ protected:
                                   const std::string& uri,
                                   StringData ident,
                                   const IndexDescriptor* desc);
-
-    class BulkBuilder;
-    class IdBulkBuilder;
-    class StandardBulkBuilder;
 
     /*
      * The data format version is effectively const after the WiredTigerIndex instance is

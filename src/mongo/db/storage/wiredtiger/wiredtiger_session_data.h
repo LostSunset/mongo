@@ -29,8 +29,7 @@
 
 #pragma once
 
-#include <wiredtiger.h>
-
+#include "mongo/db/storage/wiredtiger/wiredtiger_session.h"
 #include "mongo/util/interruptible.h"
 
 namespace mongo {
@@ -44,21 +43,21 @@ public:
     /**
      * Allows WT operations running on this 'session' access to the MDB layer 'interruptible'.
      */
-    SessionDataRAII(WT_SESSION* session, Interruptible* interruptible) : _session(session) {
-        invariant(!_session->app_private);
-        _session->app_private = interruptible;
+    SessionDataRAII(WiredTigerSession* session, Interruptible* interruptible) : _session(session) {
+        invariant(!_session->getSession()->app_private);
+        _session->getSession()->app_private = interruptible;
     }
 
     /**
      * Clears on exit the WT_SESSION::app_private void*. This allows the WT_SESSION to be safely
-     * returned to the WiredTigerSessionCache.
+     * returned to the WiredTigerConnection.
      */
     ~SessionDataRAII() {
-        _session->app_private = nullptr;
+        _session->getSession()->app_private = nullptr;
     }
 
 private:
-    WT_SESSION* _session;
+    WiredTigerSession* _session;
 };
 
 }  // namespace mongo

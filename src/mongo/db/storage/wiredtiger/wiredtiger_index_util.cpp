@@ -38,10 +38,10 @@
 #include "mongo/base/status_with.h"
 #include "mongo/base/string_data.h"
 #include "mongo/db/storage/recovery_unit.h"
+#include "mongo/db/storage/wiredtiger/wiredtiger_connection.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_cursor.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_prepare_conflict.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_recovery_unit.h"
-#include "mongo/db/storage/wiredtiger/wiredtiger_session_cache.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_session_data.h"
 #include "mongo/db/storage/wiredtiger/wiredtiger_util.h"
 #include "mongo/db/transaction_resources.h"
@@ -103,12 +103,12 @@ StatusWith<int64_t> WiredTigerIndexUtil::compact(Interruptible& interruptible,
                                                  WiredTigerRecoveryUnit& ru,
                                                  const std::string& uri,
                                                  const CompactOptions& options) {
-    WiredTigerSessionCache* cache = ru.getSessionCache();
-    if (cache->isEphemeral()) {
+    WiredTigerConnection* connection = ru.getConnection();
+    if (connection->isEphemeral()) {
         return 0;
     }
 
-    WT_SESSION* s = ru.getSession()->getSession();
+    WiredTigerSession* s = ru.getSession();
     ru.abandonSnapshot();
 
     // Set a pointer on the WT_SESSION to the interruptible, so that WT::compact can use a
@@ -123,7 +123,7 @@ StatusWith<int64_t> WiredTigerIndexUtil::compact(Interruptible& interruptible,
     if (options.freeSpaceTargetMB) {
         config << ",free_space_target=" + std::to_string(*options.freeSpaceTargetMB) + "MB";
     }
-    int ret = s->compact(s, uri.c_str(), config.str().c_str());
+    int ret = s->compact(uri.c_str(), config.str().c_str());
     if (ret == WT_ERROR && !interruptible.checkForInterruptNoAssert().isOK()) {
         return Status(ErrorCodes::Interrupted,
                       str::stream() << "Storage compaction interrupted on " << uri.c_str());
@@ -139,9 +139,9 @@ StatusWith<int64_t> WiredTigerIndexUtil::compact(Interruptible& interruptible,
                                     << " due to cache eviction pressure");
     }
 
-    invariantWTOK(ret, s);
+    invariantWTOK(ret, *s);
 
-    return options.dryRun ? WiredTigerUtil::getIdentCompactRewrittenExpectedSize(s, uri) : 0;
+    return options.dryRun ? WiredTigerUtil::getIdentCompactRewrittenExpectedSize(*s, uri) : 0;
 }
 
 bool WiredTigerIndexUtil::isEmpty(OperationContext* opCtx,
@@ -168,7 +168,7 @@ void WiredTigerIndexUtil::validateStructure(
     const std::string& uri,
     const boost::optional<std::string>& configurationOverride,
     IndexValidateResults& results) {
-    if (ru.getSessionCache()->isEphemeral()) {
+    if (ru.getConnection()->isEphemeral()) {
         return;
     }
 

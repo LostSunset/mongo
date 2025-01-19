@@ -212,9 +212,9 @@ public:
         return state;
     }
 
-    bool isEOF() override {
+    bool isEOF() const override {
         return _plan.exhausted();
-    };
+    }
 
     long long executeCount() override {
         MONGO_UNREACHABLE_TASSERT(8375802);
@@ -256,7 +256,7 @@ public:
         return !_killStatus.isOK();
     }
 
-    Status getKillStatus() override {
+    Status getKillStatus() const override {
         invariant(isMarkedAsKilled());
         return _killStatus;
     }
@@ -846,9 +846,8 @@ boost::optional<IndexEntry> getIndexForExpressEquality(const CanonicalQuery& cq,
         const auto currNFields = e.keyPattern.nFields();
         if (
             // We cannot guarantee that the result has at most one result doc.
-            ((!e.unique || currNFields != 1) && !hasLimitOne) ||
             // TODO SERVER-87016: Support shard filtering for limitOne query with non-unique index.
-            (!e.unique && needsShardFilter) ||
+            ((!e.unique || currNFields != 1) && (!hasLimitOne || needsShardFilter)) ||
             // This index is suitable but has more fields than the best so far.
             (bestEntry && numFields <= currNFields)) {
             continue;

@@ -145,8 +145,10 @@ public:
 
     const char* getSourceName() const final;
 
-    DocumentSourceType getType() const override {
-        return DocumentSourceType::kLookUp;
+    static const Id& id;
+
+    Id getId() const override {
+        return id;
     }
 
     void serializeToArray(std::vector<Value>& array,
@@ -200,6 +202,7 @@ public:
         std::vector<BSONObj> pipeline,
         boost::optional<std::pair<std::string, std::string>> localForeignFields,
         const boost::intrusive_ptr<ExpressionContext>& expCtx);
+
     /**
      * Builds the BSONObj used to query the foreign collection and wraps it in a $match.
      */
